@@ -84,6 +84,7 @@ _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
+_G.MobilePadEnabled = UserInputService.TouchEnabled -- true = show dedicated touch move joystick for mobile
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
 _G.KillAuraRange = 20
@@ -106,6 +107,7 @@ local function SaveConfig()
                 SmoothAim = _G.SmoothAim,
                 TeamCheck = _G.TeamCheck,
                 AutoShoot = _G.AutoShoot,
+                MobilePadEnabled = _G.MobilePadEnabled,
                 ESPRange = _G.ESPRange,
                 ReachDistance = _G.ReachDistance,
                 KillAuraRange = _G.KillAuraRange,
@@ -129,6 +131,7 @@ local function LoadConfig()
                 if data.SmoothAim ~= nil then _G.SmoothAim = data.SmoothAim end
                 if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
                 if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
+                if data.MobilePadEnabled ~= nil then _G.MobilePadEnabled = data.MobilePadEnabled end
                 if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
                 if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
                 if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
@@ -206,6 +209,82 @@ ScreenGui.Name = "ZHub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parentContainer
+
+-- [[ DEDICATED MOBILE MOVE PAD (JOYSTICK) ]] --
+local _mobileMoveVector = Vector3.new()
+local _padDragging = false
+local _padTouchInput = nil
+
+local MobilePadFrame = Instance.new("Frame")
+MobilePadFrame.Name = "MobileMovePad"
+MobilePadFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+MobilePadFrame.BackgroundTransparency = 0.4
+MobilePadFrame.Position = UDim2.new(0, 35, 1, -175)
+MobilePadFrame.Size = UDim2.new(0, 130, 0, 130)
+MobilePadFrame.AnchorPoint = Vector2.new(0, 0)
+MobilePadFrame.Visible = _G.MobilePadEnabled
+MobilePadFrame.Parent = ScreenGui
+ApplyCorner(MobilePadFrame, 999)
+ApplyStroke(MobilePadFrame, Theme.Accent, 2, 0.4)
+
+local MobilePadKnob = Instance.new("Frame")
+MobilePadKnob.Name = "Knob"
+MobilePadKnob.BackgroundColor3 = Theme.Accent
+MobilePadKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+MobilePadKnob.Size = UDim2.new(0, 48, 0, 48)
+MobilePadKnob.Parent = MobilePadFrame
+ApplyCorner(MobilePadKnob, 999)
+ApplyStroke(MobilePadKnob, Theme.Text, 2, 0.2)
+
+local function UpdateMobilePad(input)
+    local center = MobilePadFrame.AbsolutePosition + (MobilePadFrame.AbsoluteSize / 2)
+    local touchPos = Vector2.new(input.Position.X, input.Position.Y)
+    local delta = touchPos - center
+    local maxRadius = MobilePadFrame.AbsoluteSize.X / 2
+
+    local dist = math.min(delta.Magnitude, maxRadius)
+    local dir = delta.Magnitude > 0 and delta.Unit or Vector2.new()
+    local knobPos = dir * dist
+
+    MobilePadKnob.Position = UDim2.new(0.5, knobPos.X, 0.5, knobPos.Y)
+
+    local normX = knobPos.X / maxRadius
+    local normY = knobPos.Y / maxRadius
+
+    local camCFrame = Camera.CFrame
+    local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
+    local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
+
+    _mobileMoveVector = (right * normX) + (forward * (-normY))
+end
+
+local function ResetMobilePad()
+    MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+    _mobileMoveVector = Vector3.new()
+end
+
+MobilePadFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        _padDragging = true
+        _padTouchInput = input
+        UpdateMobilePad(input)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if _padDragging and (input == _padTouchInput or input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        UpdateMobilePad(input)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input == _padTouchInput or input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        _padDragging = false
+        _padTouchInput = nil
+        ResetMobilePad()
+    end
+end)
 
 -- Main Container
 local Main = Instance.new("Frame")
@@ -998,6 +1077,7 @@ local FOVBtn,      UpdateShowFOV  = CreateToggleButton("Show FOV",   "⭕", _G.S
 local AimModeBtn,  UpdateAimMode  = CreateToggleButton("Smooth Aim",  "🔄", false)
 local TeamCheckBtn, UpdateTeamCheck = CreateToggleButton("Team Check", "🤝", _G.TeamCheck)
 local AutoShootBtn, UpdateAutoShoot = CreateToggleButton("Auto Shoot", "🔫", _G.AutoShoot)
+local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad", "🕹️", _G.MobilePadEnabled)
 
 -- [[ ACTION BUTTONS ]] --
 local ActionSection = Instance.new("Frame")
@@ -2206,6 +2286,18 @@ AutoShootBtn.MouseButton1Click:Connect(function()
     SaveConfig()
 end)
 
+MobilePadBtn.MouseButton1Click:Connect(function()
+    _G.MobilePadEnabled = not _G.MobilePadEnabled
+    UpdateMobilePadToggle(_G.MobilePadEnabled)
+    if MobilePadFrame then
+        MobilePadFrame.Visible = _G.MobilePadEnabled
+    end
+    if not _G.MobilePadEnabled then
+        ResetMobilePad()
+    end
+    SaveConfig()
+end)
+
 -- TP Tool
 local tpClaimed = false
 TpToolBtn.MouseButton1Click:Connect(function()
@@ -2360,6 +2452,11 @@ RunService.Stepped:Connect(function()
             end
         end
 
+        -- Mobile Pad Walk Input
+        if _G.MobilePadEnabled and _mobileMoveVector.Magnitude > 0 then
+            char.Humanoid:Move(_mobileMoveVector, false)
+        end
+
         -- Walk Speed (only modify WalkSpeed when Speed feature is active)
         if _G.SpeedEnabled and not _G.Fly then
             char.Humanoid.WalkSpeed = _G.MovementSpeed
@@ -2377,6 +2474,9 @@ RunService.Stepped:Connect(function()
             bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
 
             local dir = char.Humanoid.MoveDirection
+            if dir.Magnitude == 0 and _mobileMoveVector.Magnitude > 0 then
+                dir = _mobileMoveVector
+            end
             if dir.Magnitude == 0 then
                 if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + Camera.CFrame.LookVector end
                 if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - Camera.CFrame.LookVector end
