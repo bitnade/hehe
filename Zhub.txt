@@ -1,12 +1,26 @@
 -- [[ CLEANUP PREVIOUS ]] --
 pcall(function()
-    if cleardrawings then cleardrawings() end
+    if typeof(cleardrawings) == "function" then
+        pcall(cleardrawings)
+    end
 end)
 
 if _G.ZHubFOVCircle then
     pcall(function() _G.ZHubFOVCircle:Remove() end)
     pcall(function() _G.ZHubFOVCircle:Destroy() end)
     _G.ZHubFOVCircle = nil
+end
+
+local function GetHUIContainer()
+    local success, hui = pcall(function()
+        if typeof(gethui) == "function" then
+            return gethui()
+        end
+    end)
+    if success and hui then
+        return hui
+    end
+    return nil
 end
 
 local function PurgePreviousGUIs(parent)
@@ -21,9 +35,10 @@ local function PurgePreviousGUIs(parent)
 end
 
 pcall(function() PurgePreviousGUIs(game:GetService("CoreGui")) end)
-pcall(function()
-    if gethui then PurgePreviousGUIs(gethui()) end
-end)
+local huiContainer = GetHUIContainer()
+if huiContainer then
+    pcall(function() PurgePreviousGUIs(huiContainer) end)
+end
 pcall(function()
     if game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") then
         PurgePreviousGUIs(game:GetService("Players").LocalPlayer.PlayerGui)
@@ -190,10 +205,13 @@ local successCore, coreGui = pcall(function() return game:GetService("CoreGui") 
 
 if successCore and coreGui then
     parentContainer = coreGui
-elseif pcall(function() return gethui() end) and gethui() then
-    parentContainer = gethui()
-elseif LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-    parentContainer = LocalPlayer.PlayerGui
+else
+    local hui = GetHUIContainer()
+    if hui then
+        parentContainer = hui
+    elseif LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+        parentContainer = LocalPlayer.PlayerGui
+    end
 end
 
 -- Cleanup old ZHub instances in parentContainer safely without destroying game controls
@@ -2014,11 +2032,13 @@ local function RunAutoShoot()
         end
 
         pcall(function()
-            if mouse1click then
+            if typeof(mouse1click) == "function" then
                 mouse1click()
-            elseif mouse1press then
+            elseif typeof(mouse1press) == "function" then
                 mouse1press()
-                task.delay(0.02, function() pcall(mouse1release) end)
+                task.delay(0.02, function()
+                    if typeof(mouse1release) == "function" then pcall(mouse1release) end
+                end)
             else
                 local vp = Camera.ViewportSize
                 VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
@@ -2057,11 +2077,13 @@ local function RunAutoShoot()
 
     -- 3. Executor Native Left Click Functions
     pcall(function()
-        if mouse1click then
+        if typeof(mouse1click) == "function" then
             mouse1click()
-        elseif mouse1press then
+        elseif typeof(mouse1press) == "function" then
             mouse1press()
-            task.delay(0.02, function() pcall(mouse1release) end)
+            task.delay(0.02, function()
+                if typeof(mouse1release) == "function" then pcall(mouse1release) end
+            end)
         end
     end)
 
