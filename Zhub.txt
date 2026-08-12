@@ -990,7 +990,7 @@ local ToggleGrid = Instance.new("Frame")
 ToggleGrid.Name = "ToggleGrid"
 ToggleGrid.BackgroundTransparency = 1
 ToggleGrid.AutomaticSize = Enum.AutomaticSize.Y
-ToggleGrid.Size = UDim2.new(1, 0, 0, 420)
+ToggleGrid.Size = UDim2.new(1, 0, 0, 470)
 ToggleGrid.Parent = Content
 
 local GridLayout = Instance.new("UIGridLayout")
@@ -1037,47 +1037,39 @@ local function CreateToggleButton(name, icon, isActive)
     local Status = Instance.new("Frame")
     Status.Name = "Status"
     Status.BackgroundColor3 = isActive and Theme.Success or Theme.Danger
-    Status.Position = UDim2.new(1, -22, 0.5, -5)
+    Status.Position = UDim2.new(1, -20, 0.5, -5)
     Status.Size = UDim2.new(0, 10, 0, 10)
     Status.Parent = Button
-    ApplyCorner(Status, 5)
-
-    Button.MouseEnter:Connect(function()
-        CreateTween(Button, {BackgroundColor3 = isActive and Theme.AccentGlow or Theme.SurfaceHover}, 0.15):Play()
-    end)
-
-    Button.MouseLeave:Connect(function()
-        CreateTween(Button, {BackgroundColor3 = isActive and Theme.Accent or Theme.Surface}, 0.15):Play()
-    end)
+    ApplyCorner(Status, 999)
 
     local function UpdateState(active)
-        isActive = active
-        CreateTween(Button, {BackgroundColor3 = active and Theme.Accent or Theme.Surface}, 0.2):Play()
-        CreateTween(Status, {BackgroundColor3 = active and Theme.Success or Theme.Danger}, 0.2):Play()
-        CreateTween(IconLabel, {TextColor3 = active and Theme.Text or Theme.TextMuted}, 0.2):Play()
-        CreateTween(Label, {TextColor3 = active and Theme.Text or Theme.TextMuted}, 0.2):Play()
+        Button.BackgroundColor3 = active and Theme.Accent or Theme.Surface
+        IconLabel.TextColor3 = active and Theme.Text or Theme.TextMuted
+        Label.TextColor3 = active and Theme.Text or Theme.TextMuted
+        Status.BackgroundColor3 = active and Theme.Success or Theme.Danger
         stroke.Color = active and Theme.AccentGlow or Theme.Border
     end
 
     return Button, UpdateState
 end
 
-local NoclipBtn,   UpdateNoclip   = CreateToggleButton("Noclip",     "👻", false)
-local FlyBtn,      UpdateFly      = CreateToggleButton("Fly",        "🚀", false)
-local SpeedBtn,    UpdateSpeed    = CreateToggleButton("Speed",      "⚡", false)
-local EspBtn,      UpdateEsp      = CreateToggleButton("ESP",        "👁", false)
-local FreeCamBtn,  UpdateFreeCam  = CreateToggleButton("FreeCam",    "🎥", false)
-local InfJumpBtn,  UpdateInfJump  = CreateToggleButton("Inf Jump",   "🦘", false)
-local BrightBtn,   UpdateBright   = CreateToggleButton("FullBright", "☀️", false)
-local SafeBtn,     UpdateSafe     = CreateToggleButton("Safe Mode",  "🛡",  true)
-local ReachBtn,    UpdateReach    = CreateToggleButton("Reach",      "🗡", false)
-local KillAuraBtn, UpdateKillAura = CreateToggleButton("Kill Aura",  "💀", false)
-local AutoAimBtn,  UpdateAutoAim  = CreateToggleButton("Auto Aim [T]", "🎯", false)
-local FOVBtn,      UpdateShowFOV  = CreateToggleButton("Show FOV",   "⭕", _G.ShowFOV)
-local AimModeBtn,  UpdateAimMode  = CreateToggleButton("Smooth Aim",  "🔄", false)
-local TeamCheckBtn, UpdateTeamCheck = CreateToggleButton("Team Check", "🤝", _G.TeamCheck)
-local AutoShootBtn, UpdateAutoShoot = CreateToggleButton("Auto Shoot", "🔫", _G.AutoShoot)
-local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad", "🕹️", _G.MobilePadEnabled)
+-- Primary Aim & Mobile Buttons at top for instant access
+local AutoAimBtn,   UpdateAutoAim        = CreateToggleButton("Auto Aim [T]", "🎯", false)
+local AutoShootBtn, UpdateAutoShoot      = CreateToggleButton("Auto Shoot",   "🔫", _G.AutoShoot)
+local AimModeBtn,   UpdateAimMode        = CreateToggleButton("Smooth Aim",   "🔄", false)
+local TeamCheckBtn, UpdateTeamCheck      = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
+local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad",   "🕹️", _G.MobilePadEnabled)
+local FOVBtn,       UpdateShowFOV        = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
+local EspBtn,       UpdateEsp            = CreateToggleButton("ESP",          "👁", false)
+local BrightBtn,    UpdateBright         = CreateToggleButton("FullBright",   "☀️", false)
+local NoclipBtn,    UpdateNoclip         = CreateToggleButton("Noclip",       "👻", false)
+local FlyBtn,       UpdateFly            = CreateToggleButton("Fly",          "🚀", false)
+local SpeedBtn,     UpdateSpeed          = CreateToggleButton("Speed",        "⚡", false)
+local InfJumpBtn,   UpdateInfJump        = CreateToggleButton("Inf Jump",     "🦘", false)
+local KillAuraBtn,  UpdateKillAura       = CreateToggleButton("Kill Aura",    "💀", false)
+local ReachBtn,     UpdateReach          = CreateToggleButton("Reach",        "🗡", false)
+local FreeCamBtn,   UpdateFreeCam        = CreateToggleButton("FreeCam",      "🎥", false)
+local SafeBtn,      UpdateSafe           = CreateToggleButton("Safe Mode",    "🛡",  true)
 
 -- [[ ACTION BUTTONS ]] --
 local ActionSection = Instance.new("Frame")
