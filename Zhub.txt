@@ -84,7 +84,6 @@ _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
-_G.MobileShootTargetEnabled = false -- true = show & enable draggable shoot target for mobile fire button
 _G.MobilePadEnabled = UserInputService.TouchEnabled -- true = show dedicated touch move joystick for mobile
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
@@ -108,7 +107,6 @@ local function SaveConfig()
                 SmoothAim = _G.SmoothAim,
                 TeamCheck = _G.TeamCheck,
                 AutoShoot = _G.AutoShoot,
-                MobileShootTargetEnabled = _G.MobileShootTargetEnabled,
                 MobilePadEnabled = _G.MobilePadEnabled,
                 ESPRange = _G.ESPRange,
                 ReachDistance = _G.ReachDistance,
@@ -133,7 +131,6 @@ local function LoadConfig()
                 if data.SmoothAim ~= nil then _G.SmoothAim = data.SmoothAim end
                 if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
                 if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
-                if data.MobileShootTargetEnabled ~= nil then _G.MobileShootTargetEnabled = data.MobileShootTargetEnabled end
                 if data.MobilePadEnabled ~= nil then _G.MobilePadEnabled = data.MobilePadEnabled end
                 if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
                 if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
@@ -286,62 +283,6 @@ UserInputService.InputEnded:Connect(function(input)
         _padDragging = false
         _padTouchInput = nil
         ResetMobilePad()
-    end
-end)
-
--- [[ DRAGGABLE MOBILE SHOOT CLICKER TARGET ]] --
-local MobileShootFrame = Instance.new("Frame")
-MobileShootFrame.Name = "MobileShootTarget"
-MobileShootFrame.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-MobileShootFrame.BackgroundTransparency = 0.4
-MobileShootFrame.Position = UDim2.new(0.82, -25, 0.7, -25)
-MobileShootFrame.Size = UDim2.new(0, 50, 0, 50)
-MobileShootFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-MobileShootFrame.Visible = _G.MobileShootTargetEnabled
-MobileShootFrame.ZIndex = 99
-MobileShootFrame.Parent = ScreenGui
-ApplyCorner(MobileShootFrame, 999)
-ApplyStroke(MobileShootFrame, Color3.fromRGB(255, 255, 255), 2, 0.2)
-
-local MobileShootLabel = Instance.new("TextLabel")
-MobileShootLabel.Name = "Label"
-MobileShootLabel.BackgroundTransparency = 1
-MobileShootLabel.Size = UDim2.new(1, 0, 1, 0)
-MobileShootLabel.Font = Enum.Font.GothamBold
-MobileShootLabel.Text = "🎯 SHOOT"
-MobileShootLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-MobileShootLabel.TextSize = 9
-MobileShootLabel.ZIndex = 100
-MobileShootLabel.Parent = MobileShootFrame
-
-local _shootDragging = false
-local _shootDragStart = nil
-local _shootStartPos = nil
-
-MobileShootFrame.InputBegan:Connect(function(input)
-    if not _G.MobileShootTargetEnabled then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        _shootDragging = true
-        _shootDragStart = input.Position
-        _shootStartPos = MobileShootFrame.Position
-
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                _shootDragging = false
-            end
-        end)
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if _shootDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - _shootDragStart
-        MobileShootFrame.Position = UDim2.new(
-            _shootStartPos.X.Scale,
-            _shootStartPos.X.Offset + delta.X,
-            _shootStartPos.Y.Scale,
-            _shootStartPos.Y.Offset + delta.Y
-        )
     end
 end)
 
@@ -1115,7 +1056,6 @@ end
 -- Primary Aim & Mobile Buttons at top for instant access
 local AutoAimBtn,   UpdateAutoAim        = CreateToggleButton("Auto Aim [T]", "🎯", false)
 local AutoShootBtn, UpdateAutoShoot      = CreateToggleButton("Auto Shoot",   "🔫", _G.AutoShoot)
-local ShootTargetBtn, UpdateShootTargetToggle = CreateToggleButton("Shoot Target", "🎯", _G.MobileShootTargetEnabled)
 local AimModeBtn,   UpdateAimMode        = CreateToggleButton("Smooth Aim",   "🔄", false)
 local TeamCheckBtn, UpdateTeamCheck      = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
 local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad",   "🕹️", _G.MobilePadEnabled)
@@ -2080,45 +2020,33 @@ local function RunAutoShoot()
         end)
     end
 
-    -- 2. Mobile & PC Universal Input Simulation
+    -- 2. Mobile & PC Universal Input Simulation (Do not return early; executes across all game frameworks)
     pcall(function()
         local vp = Camera.ViewportSize
-        local clickX, clickY
+        local cx, cy = vp.X / 2, vp.Y / 2
 
-        -- If Mobile Shoot Target is enabled & visible, click directly on the draggable target position!
-        if _G.MobileShootTargetEnabled and MobileShootFrame and MobileShootFrame.Visible then
-            local pos = MobileShootFrame.AbsolutePosition
-            local size = MobileShootFrame.AbsoluteSize
-            clickX = pos.X + (size.X / 2)
-            clickY = pos.Y + (size.Y / 2) + 36 -- Account for Gui inset top bar offset
-        else
-            -- Fallback to center screen crosshair
-            clickX = vp.X / 2
-            clickY = vp.Y / 2
-        end
-
-        -- Strategy A: VirtualInputManager Mouse Left Click Simulation
+        -- Strategy A: VirtualInputManager Mouse Left Click Simulation (Primary left click trigger)
         local vim = game:GetService("VirtualInputManager")
         if vim then
             pcall(function()
-                vim:SendMouseButtonEvent(clickX, clickY, 0, true, game, 1)
+                vim:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
                 task.delay(0.02, function()
-                    pcall(function() vim:SendMouseButtonEvent(clickX, clickY, 0, false, game, 1) end)
+                    pcall(function() vim:SendMouseButtonEvent(cx, cy, 0, false, game, 1) end)
                 end)
             end)
 
             -- Mobile Touch Event Simulation (TouchState: 0 = Began, 2 = Ended)
             if UserInputService.TouchEnabled then
                 pcall(function()
-                    vim:SendTouchEvent(9999, 0, clickX, clickY)
+                    vim:SendTouchEvent(9999, 0, cx, cy)
                     task.delay(0.02, function()
-                        pcall(function() vim:SendTouchEvent(9999, 2, clickX, cy or clickY) end)
+                        pcall(function() vim:SendTouchEvent(9999, 2, cx, cy) end)
                     end)
                 end)
             end
         end
 
-        -- Strategy B: Executor-level mouse click simulation
+        -- Strategy B: Executor-level mouse click simulation (Delta, CodeX, Fluxus, Solara, Arceus X, etc.)
         if mouse1click then
             pcall(mouse1click)
         elseif mouse1press then
@@ -2130,10 +2058,10 @@ local function RunAutoShoot()
         local vu = game:GetService("VirtualUser")
         if vu then
             pcall(function()
-                vu:ClickButton1(Vector2.new(clickX, clickY))
-                vu:Button1Down(Vector2.new(clickX, clickY))
+                vu:ClickButton1(Vector2.new(cx, cy))
+                vu:Button1Down(Vector2.new(cx, cy))
                 task.delay(0.02, function()
-                    pcall(function() vu:Button1Up(Vector2.new(clickX, clickY)) end)
+                    pcall(function() vu:Button1Up(Vector2.new(cx, cy)) end)
                 end)
             end)
         end
@@ -2388,15 +2316,6 @@ end)
 AutoShootBtn.MouseButton1Click:Connect(function()
     _G.AutoShoot = not _G.AutoShoot
     UpdateAutoShoot(_G.AutoShoot)
-    SaveConfig()
-end)
-
-ShootTargetBtn.MouseButton1Click:Connect(function()
-    _G.MobileShootTargetEnabled = not _G.MobileShootTargetEnabled
-    UpdateShootTargetToggle(_G.MobileShootTargetEnabled)
-    if MobileShootFrame then
-        MobileShootFrame.Visible = _G.MobileShootTargetEnabled
-    end
     SaveConfig()
 end)
 
