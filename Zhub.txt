@@ -1894,7 +1894,7 @@ local function FindBestTarget()
 
     -- Find new closest target (FAST FILTER FIRST: screen position & FOV distance -> SLOW CHECK: Raycast)
     local isDotMode = (not _G.AutoAim) and _G.AutoShoot
-    local effectiveFOV = isDotMode and 12 or _G.AimFOV
+    local effectiveFOV = isDotMode and (UserInputService.TouchEnabled and 30 or 15) or _G.AimFOV
 
     local bestChar = nil
     local bestDist = effectiveFOV
@@ -1984,7 +1984,7 @@ end
 
 -- [[ AUTO SHOOT SYSTEM ]] --
 local _lastShootTime = 0
-local AUTO_SHOOT_RATE = 0.1 -- 10 shots per second max
+local AUTO_SHOOT_RATE = 0.08 -- ~12 shots per second max
 
 local function RunAutoShoot()
     if not _G.AutoShoot then return end
@@ -2002,26 +2002,67 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- Primary: Tool Activate (safest for mobile, 0 impact on touch walk joystick!)
+    -- 1. Fire equipped Tool via Roblox native API & Gun Remotes if present
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
         pcall(function() tool:Activate() end)
-        return -- Handled natively! Prevents raw mouse events from overriding mobile touch joystick
+
+        -- Trigger common gun RemoteEvents inside Tool for frameworks that bypass Tool.Activated
+        pcall(function()
+            for _, child in ipairs(tool:GetChildren()) do
+                if child:IsA("RemoteEvent") then
+                    local lname = string.lower(child.Name)
+                    if lname:find("shoot") or lname:find("fire") or lname:find("remote") or lname:find("gun") or lname:find("action") or lname:find("bullet") then
+                        pcall(function() child:FireServer() end)
+                    end
+                end
+            end
+        end)
     end
 
-    -- Secondary fallback: ONLY if no Tool instance exists & on PC with mouse
+    -- 2. Mobile & PC Universal Input Simulation (Do not return early; executes across all game frameworks)
     pcall(function()
+        local vp = Camera.ViewportSize
+        local cx, cy = vp.X / 2, vp.Y / 2
+
+        -- Strategy A: VirtualInputManager Mouse Left Click Simulation (Primary left click trigger)
+        local vim = game:GetService("VirtualInputManager")
+        if vim then
+            pcall(function()
+                vim:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+                task.delay(0.02, function()
+                    pcall(function() vim:SendMouseButtonEvent(cx, cy, 0, false, game, 1) end)
+                end)
+            end)
+
+            -- Mobile Touch Event Simulation (TouchState: 0 = Began, 2 = Ended)
+            if UserInputService.TouchEnabled then
+                pcall(function()
+                    vim:SendTouchEvent(9999, 0, cx, cy)
+                    task.delay(0.02, function()
+                        pcall(function() vim:SendTouchEvent(9999, 2, cx, cy) end)
+                    end)
+                end)
+            end
+        end
+
+        -- Strategy B: Executor-level mouse click simulation (Delta, CodeX, Fluxus, Solara, Arceus X, etc.)
         if mouse1click then
-            mouse1click()
+            pcall(mouse1click)
         elseif mouse1press then
-            mouse1press()
+            pcall(mouse1press)
             task.delay(0.02, function() pcall(mouse1release) end)
-        elseif UserInputService.MouseEnabled then
-            local vim = game:GetService("VirtualInputManager")
-            local vp = Camera.ViewportSize
-            vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-            task.delay(0.02, function()
-                vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+        end
+
+        -- Strategy C: VirtualUser Left Click fallback
+        local vu = game:GetService("VirtualUser")
+        if vu then
+            pcall(function()
+                vu:ClickButton1(Vector2.new(cx, cy))
+                vu:Button1Down(Vector2.new(cx, cy))
+                task.delay(0.02, function()
+                    pcall(function() vu:Button1Up(Vector2.new(cx, cy)) end)
+                end)
             end)
         end
     end)
