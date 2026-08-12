@@ -112,7 +112,7 @@ local CONFIG_FILE = "ZHub_FOV_Config.json"
 
 local function SaveConfig()
     pcall(function()
-        if writefile then
+        if typeof(writefile) == "function" then
             local data = {
                 ShowFOV = _G.ShowFOV,
                 AimFOV = _G.AimFOV,
@@ -134,7 +134,7 @@ end
 
 local function LoadConfig()
     pcall(function()
-        if readfile and isfile and isfile(CONFIG_FILE) then
+        if typeof(readfile) == "function" and typeof(isfile) == "function" and isfile(CONFIG_FILE) then
             local content = readfile(CONFIG_FILE)
             local data = HttpService:JSONDecode(content)
             if type(data) == "table" then
@@ -200,34 +200,47 @@ local function ApplyPadding(obj, padding)
 end
 
 -- [[ MAIN UI ]] --
-local parentContainer = nil
-local successCore, coreGui = pcall(function() return game:GetService("CoreGui") end)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ZHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-if successCore and coreGui then
-    parentContainer = coreGui
-else
-    local hui = GetHUIContainer()
-    if hui then
-        parentContainer = hui
-    elseif LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-        parentContainer = LocalPlayer.PlayerGui
+local parentContainer = nil
+
+-- Try gethui() first (best for Delta / mobile executors to prevent CoreGui permission error)
+local hui = GetHUIContainer()
+if hui then
+    local s = pcall(function() ScreenGui.Parent = hui end)
+    if s then parentContainer = hui end
+end
+
+-- Fallback to CoreGui
+if not parentContainer then
+    local s, cg = pcall(function() return game:GetService("CoreGui") end)
+    if s and cg then
+        local s2 = pcall(function() ScreenGui.Parent = cg end)
+        if s2 then parentContainer = cg end
+    end
+end
+
+-- Fallback to PlayerGui
+if not parentContainer then
+    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+        local s = pcall(function() ScreenGui.Parent = LocalPlayer.PlayerGui end)
+        if s then parentContainer = LocalPlayer.PlayerGui end
     end
 end
 
 -- Cleanup old ZHub instances in parentContainer safely without destroying game controls
 if parentContainer then
-    for _, child in pairs(parentContainer:GetChildren()) do
-        if child.Name == "ZHub" then
-            pcall(function() child:Destroy() end)
+    pcall(function()
+        for _, child in pairs(parentContainer:GetChildren()) do
+            if child ~= ScreenGui and child.Name == "ZHub" then
+                pcall(function() child:Destroy() end)
+            end
         end
-    end
+    end)
 end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ZHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = parentContainer
 
 -- [[ DEDICATED MOBILE MOVE PAD (JOYSTICK) ]] --
 local _mobileMoveVector = Vector3.new()
