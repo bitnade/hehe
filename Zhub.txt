@@ -11,25 +11,24 @@ end
 
 local function PurgePreviousGUIs(parent)
     if not parent then return end
-    for _, v in pairs(parent:GetChildren()) do
-        if v:IsA("ScreenGui") and (v.Name == "MovementPro" or v.Name == "ZHub" or string.find(v.Name, "Movement_Elite")) then
-            pcall(function() v:Destroy() end)
+    pcall(function()
+        for _, v in pairs(parent:GetChildren()) do
+            if v:IsA("ScreenGui") and (v.Name == "MovementPro" or v.Name == "ZHub" or v.Name == "FOVCircleGui" or string.find(v.Name, "Movement_Elite")) then
+                pcall(function() v:Destroy() end)
+            end
         end
-    end
-    for _, v in pairs(parent:GetDescendants()) do
-        if v.Name == "FOVCircleGui" or v.Name == "ZHubFOVCircle" then
-            pcall(function() v:Destroy() end)
-        end
-    end
+    end)
 end
 
-PurgePreviousGUIs(game:GetService("CoreGui"))
-if pcall(function() return gethui() end) and gethui() then
-    PurgePreviousGUIs(gethui())
-end
-if game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") then
-    PurgePreviousGUIs(game:GetService("Players").LocalPlayer.PlayerGui)
-end
+pcall(function() PurgePreviousGUIs(game:GetService("CoreGui")) end)
+pcall(function()
+    if gethui then PurgePreviousGUIs(gethui()) end
+end)
+pcall(function()
+    if game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui") then
+        PurgePreviousGUIs(game:GetService("Players").LocalPlayer.PlayerGui)
+    end
+end)
 
 local CurrentLoopID = tick()
 _G.MovementLoopID = CurrentLoopID
@@ -187,12 +186,14 @@ end
 
 -- [[ MAIN UI ]] --
 local parentContainer = nil
-if pcall(function() return gethui() end) and gethui() then
+local successCore, coreGui = pcall(function() return game:GetService("CoreGui") end)
+
+if successCore and coreGui then
+    parentContainer = coreGui
+elseif pcall(function() return gethui() end) and gethui() then
     parentContainer = gethui()
 elseif LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
     parentContainer = LocalPlayer.PlayerGui
-else
-    parentContainer = game:GetService("CoreGui")
 end
 
 -- Cleanup old ZHub instances in parentContainer safely without destroying game controls
