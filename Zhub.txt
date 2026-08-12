@@ -83,6 +83,7 @@ _G.AimWallCheck = true
 _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
+_G.AutoShoot = false  -- true = automatically fire at locked/valid target
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
 _G.KillAuraRange = 20
@@ -104,6 +105,7 @@ local function SaveConfig()
                 HeadshotChance = _G.HeadshotChance,
                 SmoothAim = _G.SmoothAim,
                 TeamCheck = _G.TeamCheck,
+                AutoShoot = _G.AutoShoot,
                 ESPRange = _G.ESPRange,
                 ReachDistance = _G.ReachDistance,
                 KillAuraRange = _G.KillAuraRange,
@@ -126,6 +128,7 @@ local function LoadConfig()
                 if data.HeadshotChance ~= nil then _G.HeadshotChance = data.HeadshotChance end
                 if data.SmoothAim ~= nil then _G.SmoothAim = data.SmoothAim end
                 if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
+                if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
                 if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
                 if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
                 if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
@@ -295,7 +298,6 @@ CloseBtn.Parent = Controls
 ApplyCorner(CloseBtn, 6)
 
 -- Content Area
--- [[ NOTE: Canvas height increased to 1000 to fit Headshot Rate, Aim Mode, Smoothness sliders ]] --
 local Content = Instance.new("ScrollingFrame")
 Content.Name = "Content"
 Content.BackgroundTransparency = 1
@@ -304,7 +306,8 @@ Content.Size = UDim2.new(1, 0, 1, -55)
 Content.ScrollBarThickness = 3
 Content.ScrollBarImageColor3 = Theme.Accent
 Content.ScrollBarImageTransparency = 0.5
-Content.CanvasSize = UDim2.new(0, 0, 0, 1000)
+Content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Content.CanvasSize = UDim2.new(0, 0, 0, 1250)
 Content.Parent = Main
 ApplyPadding(Content, 12)
 
@@ -886,11 +889,11 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 -- [[ TOGGLE BUTTONS SECTION ]] --
--- [[ NOTE: Grid height increased to 430 for extra row with Team Check button ]] --
 local ToggleGrid = Instance.new("Frame")
 ToggleGrid.Name = "ToggleGrid"
 ToggleGrid.BackgroundTransparency = 1
-ToggleGrid.Size = UDim2.new(1, 0, 0, 430)
+ToggleGrid.AutomaticSize = Enum.AutomaticSize.Y
+ToggleGrid.Size = UDim2.new(1, 0, 0, 420)
 ToggleGrid.Parent = Content
 
 local GridLayout = Instance.new("UIGridLayout")
@@ -976,6 +979,7 @@ local AutoAimBtn,  UpdateAutoAim  = CreateToggleButton("Auto Aim [T]", "🎯", f
 local FOVBtn,      UpdateShowFOV  = CreateToggleButton("Show FOV",   "⭕", _G.ShowFOV)
 local AimModeBtn,  UpdateAimMode  = CreateToggleButton("Smooth Aim",  "🔄", false)
 local TeamCheckBtn, UpdateTeamCheck = CreateToggleButton("Team Check", "🤝", _G.TeamCheck)
+local AutoShootBtn, UpdateAutoShoot = CreateToggleButton("Auto Shoot", "🔫", _G.AutoShoot)
 
 -- [[ ACTION BUTTONS ]] --
 local ActionSection = Instance.new("Frame")
@@ -1687,7 +1691,7 @@ local function GetCrosshairPosition()
 end
 
 local function UpdateFOVCircle()
-    local shouldShow = _G.ShowFOV and (_G.AutoAim or _G.ShowFOV)
+    local shouldShow = _G.ShowFOV and (_G.AutoAim or _G.AutoShoot or _G.ShowFOV)
 
     if FOVCircle then
         FOVCircle.Visible = shouldShow
@@ -1697,12 +1701,16 @@ local function UpdateFOVCircle()
 
     if not shouldShow then return end
 
+    -- Dot mode: small 5px circle when Auto Aim is disabled & Auto Shoot is enabled
+    local isDotMode = (not _G.AutoAim) and _G.AutoShoot
+    local fovRadius = isDotMode and 5 or _G.AimFOV
+
     local crosshairPos = GetCrosshairPosition()
     if FOVCircle then
-        FOVCircle.Radius = _G.AimFOV
+        FOVCircle.Radius = fovRadius
         FOVCircle.Position = crosshairPos
     elseif GuiFOVCircle then
-        GuiFOVCircle.Size = UDim2.new(0, _G.AimFOV * 2, 0, _G.AimFOV * 2)
+        GuiFOVCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
         GuiFOVCircle.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
     end
 end
@@ -1797,8 +1805,11 @@ local function FindBestTarget()
     end
 
     -- Find new closest target (FAST FILTER FIRST: screen position & FOV distance -> SLOW CHECK: Raycast)
+    local isDotMode = (not _G.AutoAim) and _G.AutoShoot
+    local effectiveFOV = isDotMode and 12 or _G.AimFOV
+
     local bestChar = nil
-    local bestDist = _G.AimFOV
+    local bestDist = effectiveFOV
 
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
@@ -1883,6 +1894,50 @@ local function RunAutoAim(dt)
     end
 end
 
+-- [[ AUTO SHOOT SYSTEM ]] --
+local _lastShootTime = 0
+local AUTO_SHOOT_RATE = 0.1 -- 10 shots per second max
+
+local function RunAutoShoot()
+    if not _G.AutoShoot then return end
+
+    local targetChar = CurrentLockedTarget
+    if not targetChar or not targetChar.Parent then
+        targetChar = FindBestTarget()
+    end
+    if not targetChar or not targetChar.Parent then return end
+
+    local now = tick()
+    if (now - _lastShootTime) < AUTO_SHOOT_RATE then return end
+    _lastShootTime = now
+
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- Primary: Tool Activate
+    local tool = char:FindFirstChildOfClass("Tool")
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
+
+    -- Secondary: VirtualInputManager / mouse click simulation
+    pcall(function()
+        if mouse1click then
+            mouse1click()
+        elseif mouse1press then
+            mouse1press()
+            task.delay(0.02, function() pcall(mouse1release) end)
+        else
+            local vim = game:GetService("VirtualInputManager")
+            local vp = Camera.ViewportSize
+            vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+            task.delay(0.02, function()
+                vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+            end)
+        end
+    end)
+end
+
 -- Toggle button connections
 NoclipBtn.MouseButton1Click:Connect(function()
     _G.Noclip = not _G.Noclip
@@ -1918,7 +1973,8 @@ local function GetOrCreateESP(player)
         high.Parent = char
     end
 
-    local tag = char:FindFirstChild("ZTag")
+    local head = char:FindFirstChild("Head")
+    local tag = char:FindFirstChild("ZTag") or (head and head:FindFirstChild("ZTag"))
     if not tag then
         tag = Instance.new("BillboardGui")
         tag.Name = "ZTag"
@@ -1927,7 +1983,8 @@ local function GetOrCreateESP(player)
         tag.ExtentsOffset = Vector3.new(0, 2.5, 0)
         tag.MaxDistance = _G.ESPRange or 1000
         tag.Enabled = false
-        tag.Parent = char.Head
+        if head then tag.Adornee = head end
+        tag.Parent = char
 
         local tl = Instance.new("TextLabel")
         tl.Size = UDim2.new(1, 0, 1, 0)
@@ -1949,8 +2006,9 @@ local function SetESPState(player, visible)
     local char = player.Character
     if not char then return end
 
+    local head = char:FindFirstChild("Head")
     local high = char:FindFirstChild("ZESP")
-    local tag = char:FindFirstChild("ZTag")
+    local tag = char:FindFirstChild("ZTag") or (head and head:FindFirstChild("ZTag"))
 
     if visible then
         if not high or not tag then
@@ -2101,6 +2159,7 @@ local function ToggleAutoAim(forcedState)
         _G.AutoAim = not _G.AutoAim
     end
     UpdateAutoAim(_G.AutoAim)
+    SaveConfig()
 end
 
 AutoAimBtn.MouseButton1Click:Connect(function()
@@ -2121,6 +2180,13 @@ end)
 TeamCheckBtn.MouseButton1Click:Connect(function()
     _G.TeamCheck = not _G.TeamCheck
     UpdateTeamCheck(_G.TeamCheck)
+    SaveConfig()
+end)
+
+AutoShootBtn.MouseButton1Click:Connect(function()
+    _G.AutoShoot = not _G.AutoShoot
+    UpdateAutoShoot(_G.AutoShoot)
+    SaveConfig()
 end)
 
 -- TP Tool
@@ -2193,14 +2259,14 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if UserInputService:GetFocusedTextBox() ~= nil then return end
 
-    if input.KeyCode == Enum.KeyCode.T and not gameProcessed then
+    if input.KeyCode == Enum.KeyCode.T then
         -- Prevent repeat-key and double-fire
         if _autoAimDebounce then return end
         _autoAimDebounce = true
 
         ToggleAutoAim()
 
-        task.delay(0.2, function()
+        task.delay(0.15, function()
             _autoAimDebounce = false
         end)
     end
@@ -2219,6 +2285,7 @@ RunService.RenderStepped:Connect(function(dt)
     if _G.MovementLoopID ~= CurrentLoopID then return end
     if _G.ShowFOV then UpdateFOVCircle() end
     if _G.AutoAim then RunAutoAim(dt) end
+    if _G.AutoShoot then RunAutoShoot() end
 end)
 
 -- [[ MAIN LOOP ]] --
