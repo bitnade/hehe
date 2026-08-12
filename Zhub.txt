@@ -98,7 +98,7 @@ local CONFIG_FILE = "ZHub_FOV_Config.json"
 
 local function SaveConfig()
     pcall(function()
-        if typeof(writefile) == "function" then
+        if writefile then
             local data = {
                 ShowFOV = _G.ShowFOV,
                 AimFOV = _G.AimFOV,
@@ -120,7 +120,7 @@ end
 
 local function LoadConfig()
     pcall(function()
-        if typeof(readfile) == "function" and typeof(isfile) == "function" and isfile(CONFIG_FILE) then
+        if readfile and isfile and isfile(CONFIG_FILE) then
             local content = readfile(CONFIG_FILE)
             local data = HttpService:JSONDecode(content)
             if type(data) == "table" then
@@ -1984,9 +1984,7 @@ end
 
 -- [[ AUTO SHOOT SYSTEM ]] --
 local _lastShootTime = 0
-local AUTO_SHOOT_RATE = 0.08 -- ~12 shots per second
-local VirtualUser = game:GetService("VirtualUser")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local AUTO_SHOOT_RATE = 0.1 -- 10 shots per second max
 
 local function RunAutoShoot()
     if not _G.AutoShoot then return end
@@ -2004,99 +2002,28 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- [[ PC METHOD: Original clean tool activation & mouse click ]] --
-    if not UserInputService.TouchEnabled then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool then
-            pcall(function() tool:Activate() end)
-            return
-        end
-
-        pcall(function()
-            if typeof(mouse1click) == "function" then
-                mouse1click()
-            elseif typeof(mouse1press) == "function" then
-                mouse1press()
-                task.delay(0.02, function()
-                    if typeof(mouse1release) == "function" then pcall(mouse1release) end
-                end)
-            else
-                local vp = Camera.ViewportSize
-                VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-                task.delay(0.02, function()
-                    VirtualInputManager:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-                end)
-            end
-        end)
-        return
-    end
-
-    -- [[ MOBILE METHOD: Multi-method touch tap & left-click fallback ]] --
-    local vp = Camera.ViewportSize
-    local centerX, centerY = vp.X / 2, vp.Y / 2
-    local centerPos = Vector2.new(centerX, centerY)
-
-    -- 1. Explicit Left Mouse Click (MouseButton1 = 0) via VirtualInputManager
-    pcall(function()
-        VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
-        task.delay(0.02, function()
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
-            end)
-        end)
-    end)
-
-    -- 2. VirtualUser Left Click Emulation
-    pcall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton1(centerPos)
-        VirtualUser:Button1Down(centerPos)
-        task.delay(0.02, function()
-            pcall(function() VirtualUser:Button1Up(centerPos) end)
-        end)
-    end)
-
-    -- 3. Executor Native Left Click Functions
-    pcall(function()
-        if typeof(mouse1click) == "function" then
-            mouse1click()
-        elseif typeof(mouse1press) == "function" then
-            mouse1press()
-            task.delay(0.02, function()
-                if typeof(mouse1release) == "function" then pcall(mouse1release) end
-            end)
-        end
-    end)
-
-    -- 4. Active Tool Activate & RemoteEvent scan
+    -- Primary: Tool Activate (safest for mobile, 0 impact on touch walk joystick!)
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
         pcall(function() tool:Activate() end)
-        pcall(function()
-            for _, obj in pairs(tool:GetDescendants()) do
-                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                    local name = obj.Name:lower()
-                    if name:find("fire") or name:find("shoot") or name:find("attack") or name:find("bullet") or name:find("damage") or name:find("use") or name:find("swing") or name:find("hit") then
-                        local targetHRP = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Head")
-                        if obj:IsA("RemoteEvent") then
-                            if targetHRP then
-                                obj:FireServer(targetHRP.Position, targetHRP)
-                            else
-                                obj:FireServer()
-                            end
-                        end
-                    end
-                end
-            end
-        end)
+        return -- Handled natively! Prevents raw mouse events from overriding mobile touch joystick
     end
 
-    -- 5. Mobile Touch Tap Simulation
+    -- Secondary fallback: ONLY if no Tool instance exists & on PC with mouse
     pcall(function()
-        VirtualInputManager:SendTouchEvent(1, 0, centerX, centerY)
-        task.delay(0.02, function()
-            pcall(function() VirtualInputManager:SendTouchEvent(1, 2, centerX, centerY) end)
-        end)
+        if mouse1click then
+            mouse1click()
+        elseif mouse1press then
+            mouse1press()
+            task.delay(0.02, function() pcall(mouse1release) end)
+        elseif UserInputService.MouseEnabled then
+            local vim = game:GetService("VirtualInputManager")
+            local vp = Camera.ViewportSize
+            vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+            task.delay(0.02, function()
+                vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+            end)
+        end
     end)
 end
 
