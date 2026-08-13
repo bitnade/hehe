@@ -836,15 +836,30 @@ end
 local _updateAutoAimFunc = nil
 local function ToggleAutoAim(forcedState)
     if forcedState ~= nil then
-    _G.AutoAim = forcedState
+        _G.AutoAim = forcedState
     else
-    _G.AutoAim = not _G.AutoAim
+        _G.AutoAim = not _G.AutoAim
     end
     if _updateAutoAimFunc then
-    _updateAutoAimFunc(_G.AutoAim)
+        _updateAutoAimFunc(_G.AutoAim)
     end
     SaveConfig()
 end
+
+local _autoAimDebounce = false
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if UserInputService:GetFocusedTextBox() ~= nil then return end
+
+    if input.KeyCode == Enum.KeyCode.T then
+        if _autoAimDebounce then return end
+        _autoAimDebounce = true
+        ToggleAutoAim()
+        task.delay(0.15, function()
+            _autoAimDebounce = false
+        end)
+    end
+end)
 
 local function GetCrosshairPosition()
     return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
@@ -1103,14 +1118,15 @@ end
 
 -- [[ AUTO SHOOT SYSTEM ]] --
 local _lastShootTime = 0
-local AUTO_SHOOT_RATE = 0.08 -- ~12 shots per second max
+local AUTO_SHOOT_RATE = 0.1 -- 10 shots per second max
 
 local function RunAutoShoot()
     if not _G.AutoShoot then return end
+    if not _G.AutoAim then return end
 
     local targetChar = CurrentLockedTarget
     if not targetChar or not targetChar.Parent then
-    targetChar = FindBestTarget()
+        targetChar = FindBestTarget()
     end
     if not targetChar or not targetChar.Parent then return end
 
@@ -1121,24 +1137,30 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- Fire equipped Tool natively via Roblox Lua API & Tool Remotes (Zero Mouse Hijacking)
+    -- Primary: Tool Activate
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
-    pcall(function() tool:Activate() end)
+        pcall(function() tool:Activate() end)
+    end
 
-    -- Trigger common gun RemoteEvents inside Tool for custom frameworks
+    -- Secondary: VirtualInputManager / mouse click simulation
     pcall(function()
-        for _, child in ipairs(tool:GetChildren()) do
-            if child:IsA("RemoteEvent") then
-                local lname = string.lower(child.Name)
-                if lname:find("shoot") or lname:find("fire") or lname:find("remote") or lname:find("gun") or lname:find("action") or lname:find("bullet") then
-                    pcall(function() child:FireServer() end)
-                end
-            end
+        if mouse1click then
+            mouse1click()
+        elseif mouse1press then
+            mouse1press()
+            task.delay(0.02, function() pcall(mouse1release) end)
+        else
+            local vim = game:GetService("VirtualInputManager")
+            local vp = Camera.ViewportSize
+            vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+            task.delay(0.02, function()
+                vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+            end)
         end
     end)
-    end
 end
+
 
 -- [[ ZERO-ALLOCATION ESP SYSTEM ]] --
 local function GetOrCreateESP(player)
