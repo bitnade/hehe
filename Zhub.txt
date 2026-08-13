@@ -1111,14 +1111,26 @@ local function RunAutoShoot()
     -- 2. Input-specific firing method:
     pcall(function()
         if UserInputService.TouchEnabled then
-            -- MOBILE: Dispatch native touch event at ShootTargetWidget position (no controls hidden)
+            -- MOBILE: Dispatch native touch event at ShootTargetWidget position (clicks custom Shoot Button)
             if ShootTargetWidget and ShootTargetWidget.Parent then
                 local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
                 local posX, posY = centerPos.X, centerPos.Y
-                VIM:SendTouchEvent(9999, Enum.UserInputState.Begin, Vector2.new(posX, posY))
-                task.delay(0.02, function()
+                local touchId = 1001
+                local pos = Vector2.new(posX, posY)
+
+                pcall(function()
+                    VIM:SendTouchEvent(touchId, Enum.UserInputState.Begin, pos)
+                end)
+                pcall(function()
+                    VIM:SendTouchEvent(touchId, 0, pos)
+                end)
+
+                task.delay(0.03, function()
                     pcall(function()
-                        VIM:SendTouchEvent(9999, Enum.UserInputState.End, Vector2.new(posX, posY))
+                        VIM:SendTouchEvent(touchId, Enum.UserInputState.End, pos)
+                    end)
+                    pcall(function()
+                        VIM:SendTouchEvent(touchId, 2, pos)
                     end)
                 end)
             end
