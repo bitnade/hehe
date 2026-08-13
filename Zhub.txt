@@ -13,7 +13,7 @@ local function PurgePreviousGUIs(parent)
     if not parent then return end
     pcall(function()
         for _, v in ipairs(parent:GetChildren()) do
-            if v:IsA("ScreenGui") and (v.Name == "ZHub" or v.Name == "MovementPro" or string.find(v.Name, "Movement_Elite")) then
+            if v:IsA("ScreenGui") and v.Name == "ZHub" then
                 pcall(function() v:Destroy() end)
             end
         end
@@ -88,8 +88,6 @@ _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
-_G.MobilePadEnabled = false -- true = show dedicated touch move joystick for mobile
-_G.StickyJoystick = false -- true = sticky joystick mode (knob stays put when released)
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
 _G.KillAuraRange = 20
@@ -112,9 +110,7 @@ pcall(function()
         SmoothAim = _G.SmoothAim,
         TeamCheck = _G.TeamCheck,
         AutoShoot = _G.AutoShoot,
-        MobilePadEnabled = _G.MobilePadEnabled,
-        StickyJoystick = _G.StickyJoystick,
-        ESPRange = _G.ESPRange,
+                        ESPRange = _G.ESPRange,
         ReachDistance = _G.ReachDistance,
         KillAuraRange = _G.KillAuraRange,
         MovementSpeed = _G.MovementSpeed
@@ -137,9 +133,7 @@ pcall(function()
         if data.SmoothAim ~= nil then _G.SmoothAim = data.SmoothAim end
         if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
         if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
-        if data.MobilePadEnabled ~= nil then _G.MobilePadEnabled = data.MobilePadEnabled end
-        if data.StickyJoystick ~= nil then _G.StickyJoystick = data.StickyJoystick end
-        if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
+                        if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
         if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
         if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
         if data.MovementSpeed ~= nil then _G.MovementSpeed = data.MovementSpeed end
@@ -216,140 +210,6 @@ ScreenGui.Name = "ZHub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parentContainer
-
--- [[ DEDICATED MOBILE MOVE PAD (JOYSTICK - NATIVE ROBLOX THUMBSTICK STYLE) ]] --
-local _mobileMoveVector = Vector3.new()
-local _padDragging = false
-local _padTouchInput = nil
-local _padKnobPos = Vector2.new(0, 0)
-
-local MobilePadFrame = Instance.new("Frame")
-MobilePadFrame.Name = "MobileMovePad"
-MobilePadFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-MobilePadFrame.BackgroundTransparency = 0.65
-MobilePadFrame.Position = UDim2.new(0, 40, 1, -180)
-MobilePadFrame.Size = UDim2.new(0, 130, 0, 130)
-MobilePadFrame.AnchorPoint = Vector2.new(0, 0)
-MobilePadFrame.Visible = _G.MobilePadEnabled
-MobilePadFrame.Active = false
-MobilePadFrame.Parent = ScreenGui
-ApplyCorner(MobilePadFrame, 999)
-ApplyStroke(MobilePadFrame, Color3.fromRGB(255, 255, 255), 2, 0.5)
-
--- Inner ring overlay (classic Roblox thumbstick ring graphics)
-local MobilePadInnerRing = Instance.new("Frame")
-MobilePadInnerRing.Name = "InnerRing"
-MobilePadInnerRing.BackgroundTransparency = 1
-MobilePadInnerRing.AnchorPoint = Vector2.new(0.5, 0.5)
-MobilePadInnerRing.Position = UDim2.new(0.5, 0, 0.5, 0)
-MobilePadInnerRing.Size = UDim2.new(0, 80, 0, 80)
-MobilePadInnerRing.Parent = MobilePadFrame
-ApplyCorner(MobilePadInnerRing, 999)
-ApplyStroke(MobilePadInnerRing, Color3.fromRGB(255, 255, 255), 1, 0.7)
-
-local StickyBadge = Instance.new("TextLabel")
-StickyBadge.Name = "StickyBadge"
-StickyBadge.BackgroundTransparency = 1
-StickyBadge.Position = UDim2.new(0, 0, 0, -22)
-StickyBadge.Size = UDim2.new(1, 0, 0, 16)
-StickyBadge.Font = Enum.Font.GothamBold
-StickyBadge.Text = "📌 STICKY"
-StickyBadge.TextColor3 = Theme.AccentGlow
-StickyBadge.TextSize = 10
-StickyBadge.Visible = _G.StickyJoystick
-StickyBadge.Parent = MobilePadFrame
-
-local MobilePadKnob = Instance.new("Frame")
-MobilePadKnob.Name = "Knob"
-MobilePadKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-MobilePadKnob.BackgroundTransparency = 0.35
-MobilePadKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
-MobilePadKnob.Size = UDim2.new(0, 52, 0, 52)
-MobilePadKnob.Parent = MobilePadFrame
-ApplyCorner(MobilePadKnob, 999)
-ApplyStroke(MobilePadKnob, Color3.fromRGB(255, 255, 255), 2, 0.3)
-
--- Inner knob center dot (iconic Roblox mobile joystick center graphic)
-local KnobCenterDot = Instance.new("Frame")
-KnobCenterDot.Name = "CenterDot"
-KnobCenterDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-KnobCenterDot.BackgroundTransparency = 0.7
-KnobCenterDot.AnchorPoint = Vector2.new(0.5, 0.5)
-KnobCenterDot.Position = UDim2.new(0.5, 0, 0.5, 0)
-KnobCenterDot.Size = UDim2.new(0, 20, 0, 20)
-KnobCenterDot.Parent = MobilePadKnob
-ApplyCorner(KnobCenterDot, 999)
-ApplyStroke(KnobCenterDot, Color3.fromRGB(255, 255, 255), 1, 0.4)
-
-local function UpdateMobilePad(input)
-local center = MobilePadFrame.AbsolutePosition + (MobilePadFrame.AbsoluteSize / 2)
-local touchPos = Vector2.new(input.Position.X, input.Position.Y)
-local delta = touchPos - center
-local maxRadius = MobilePadFrame.AbsoluteSize.X / 2
-
-local rawDist = delta.Magnitude
-local deadzone = 0.05
-
-if rawDist < (maxRadius * deadzone) then
-    _padKnobPos = Vector2.new(0, 0)
-    MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
-    _mobileMoveVector = Vector3.new()
-else
-    local dist = math.min(rawDist, maxRadius)
-    local dir = delta.Unit
-    local knobPos = dir * dist
-
-    MobilePadKnob.Position = UDim2.new(0.5, knobPos.X, 0.5, knobPos.Y)
-
-    local normDist = dist / maxRadius
-    local scaledDist = (normDist - deadzone) / (1 - deadzone)
-    _padKnobPos = dir * scaledDist
-
-    local camCFrame = Camera.CFrame
-    local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
-    local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
-
-    _mobileMoveVector = (right * _padKnobPos.X) + (forward * (-_padKnobPos.Y))
-end
-end
-
-local function ResetMobilePad()
-MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
-_mobileMoveVector = Vector3.new()
-_padKnobPos = Vector2.new(0, 0)
-end
-
-MobilePadFrame.InputBegan:Connect(function(input)
-if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-    local center = MobilePadFrame.AbsolutePosition + (MobilePadFrame.AbsoluteSize / 2)
-    local touchPos = Vector2.new(input.Position.X, input.Position.Y)
-    local delta = touchPos - center
-    if _G.StickyJoystick and not _padDragging and delta.Magnitude < 16 then
-    ResetMobilePad()
-    return
-    end
-    _padDragging = true
-    _padTouchInput = input
-    UpdateMobilePad(input)
-end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-if _padDragging and (input == _padTouchInput or input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
-    UpdateMobilePad(input)
-end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-if input == _padTouchInput or input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-    _padDragging = false
-    _padTouchInput = nil
-    if not _G.StickyJoystick then
-    ResetMobilePad()
-    end
-end
-end)
 
 -- Main Container
 local Main = Instance.new("Frame")
@@ -1555,7 +1415,6 @@ do
     local AimModeBtn,   UpdateAimMode         = CreateToggleButton("Smooth Aim",   "🔄", false)
     local TeamCheckBtn, UpdateTeamCheck       = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
     local FOVBtn,       UpdateShowFOV         = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
-    local StickyBtn,    UpdateSticky          = CreateToggleButton("Sticky Joy",   "📌", _G.StickyJoystick)
     local EspBtn,       UpdateEsp             = CreateToggleButton("ESP",          "👁", false)
     local BrightBtn,    UpdateBright          = CreateToggleButton("FullBright",   "☀️", false)
     local NoclipBtn,    UpdateNoclip          = CreateToggleButton("Noclip",       "👻", false)
@@ -1572,13 +1431,6 @@ do
     AimModeBtn.MouseButton1Click:Connect(function() _G.SmoothAim = not _G.SmoothAim; UpdateAimMode(_G.SmoothAim); SaveConfig() end)
     TeamCheckBtn.MouseButton1Click:Connect(function() _G.TeamCheck = not _G.TeamCheck; UpdateTeamCheck(_G.TeamCheck); SaveConfig() end)
     FOVBtn.MouseButton1Click:Connect(function() _G.ShowFOV = not _G.ShowFOV; UpdateShowFOV(_G.ShowFOV); SaveConfig() end)
-    StickyBtn.MouseButton1Click:Connect(function()
-        _G.StickyJoystick = not _G.StickyJoystick
-        UpdateSticky(_G.StickyJoystick)
-        if StickyBadge then StickyBadge.Visible = _G.StickyJoystick end
-        if not _G.StickyJoystick then ResetMobilePad() end
-        SaveConfig()
-    end)
     EspBtn.MouseButton1Click:Connect(function() _G.EspEnabled = not _G.EspEnabled; UpdateEsp(_G.EspEnabled); RefreshAllESP() end)
     BrightBtn.MouseButton1Click:Connect(function() _G.FullBright = not _G.FullBright; UpdateBright(_G.FullBright); if not _G.FullBright then RestoreLighting() end end)
     NoclipBtn.MouseButton1Click:Connect(function() _G.Noclip = not _G.Noclip; UpdateNoclip(_G.Noclip) end)
@@ -1769,58 +1621,9 @@ do
         -- Add target ignore logic if needed
     end)
 
-    -- 10. Settings Section
-    local SettingsFrame = Instance.new("Frame")
-    SettingsFrame.LayoutOrder = 10
-    SettingsFrame.BackgroundTransparency = 1
-    SettingsFrame.Size = UDim2.new(1, 0, 0, 40)
-    SettingsFrame.Parent = Content
-    
-    local SettingsLayout = Instance.new("UIListLayout")
-    SettingsLayout.FillDirection = Enum.FillDirection.Horizontal
-    SettingsLayout.Padding = UDim.new(0, 10)
-    SettingsLayout.Parent = SettingsFrame
-
-    local function CreateSettingToggle(name, state, callback)
-        local btn = Instance.new("TextButton")
-        btn.Name = name
-        btn.BackgroundColor3 = state and Theme.Accent or Theme.Surface
-        btn.Size = UDim2.new(0, 155, 1, 0)
-        btn.Font = Enum.Font.GothamMedium
-        btn.Text = name
-        btn.TextColor3 = state and Theme.Text or Theme.TextMuted
-        btn.TextSize = 12
-        btn.AutoButtonColor = false
-        btn.Parent = SettingsFrame
-        ApplyCorner(btn, 8)
-        local str = ApplyStroke(btn, state and Theme.AccentGlow or Theme.Border, 1)
-
-        btn.MouseButton1Click:Connect(function()
-            state = not state
-            btn.BackgroundColor3 = state and Theme.Accent or Theme.Surface
-            btn.TextColor3 = state and Theme.Text or Theme.TextMuted
-            str.Color = state and Theme.AccentGlow or Theme.Border
-            callback(state)
-        end)
-        return btn
-    end
-
-    CreateSettingToggle("Mobile Pad", _G.MobilePadEnabled, function(st)
-        _G.MobilePadEnabled = st
-        MobilePadFrame.Visible = st
-        SaveConfig()
-    end)
-
-    CreateSettingToggle("Sticky Joystick", _G.StickyJoystick, function(st)
-        _G.StickyJoystick = st
-        StickyBadge.Visible = st
-        if not st then ResetMobilePad() end
-        SaveConfig()
-    end)
-
-    -- 11. Players Online List
+    -- 10. Players Online List
     local PlayerSection = Instance.new("Frame")
-    PlayerSection.LayoutOrder = 11
+    PlayerSection.LayoutOrder = 10
     PlayerSection.BackgroundTransparency = 1
     PlayerSection.Size = UDim2.new(1, 0, 0, 300)
     PlayerSection.Parent = Content
@@ -2037,6 +1840,27 @@ _noclipRemovedConn = char.DescendantRemoving:Connect(function(v)
 end)
 end
 
+
+-- [[ CHARACTER RESPAWN CLEANUP (Preserves Roblox Native Touch Controls on Spawn) ]] --
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    if _G.MovementLoopID ~= CurrentLoopID then return end
+    task.wait(0.2)
+    local hum = newChar:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = false
+        if _G.SpeedEnabled then
+            hum.WalkSpeed = _G.MovementSpeed
+        end
+    end
+    if _G.Noclip then
+        _noclipCharTracked = newChar
+        SetupNoclipCache(newChar)
+    end
+    if _G.ReachEnabled then
+        CreateReachPart()
+    end
+end)
+
 -- [[ MAIN LOOP ]] --
 RunService.Stepped:Connect(function()
 if _G.MovementLoopID ~= CurrentLoopID then return end
@@ -2074,7 +1898,7 @@ if _G.EspEnabled then
 end
 
 -- Skip character logic entirely if all character-modifying features are disabled
-if not (_G.Noclip or _G.SpeedEnabled or _G.Fly or _G.ReachEnabled or (_G.MobilePadEnabled and (_padDragging or (_G.StickyJoystick and _padKnobPos.Magnitude > 0)))) then return end
+if not (_G.Noclip or _G.SpeedEnabled or _G.Fly or _G.ReachEnabled) then return end
 
 local char = LocalPlayer.Character
 if char and char:FindFirstChild("Humanoid") then
@@ -2099,14 +1923,7 @@ if char and char:FindFirstChild("Humanoid") then
     end
     end
 
-    -- Mobile Pad Walk Input (supports Sticky Joystick mode)
-    if _G.MobilePadEnabled and (_padDragging or (_G.StickyJoystick and _padKnobPos.Magnitude > 0)) then
-    local camCFrame = Camera.CFrame
-    local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
-    local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
-    _mobileMoveVector = (right * _padKnobPos.X) + (forward * (-_padKnobPos.Y))
-    char.Humanoid:Move(_mobileMoveVector, false)
-    end
+
 
     -- Walk Speed (only modify WalkSpeed when Speed feature is active)
     if _G.SpeedEnabled and not _G.Fly then
@@ -2125,9 +1942,6 @@ if char and char:FindFirstChild("Humanoid") then
     bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
 
     local dir = char.Humanoid.MoveDirection
-    if dir.Magnitude == 0 and _mobileMoveVector.Magnitude > 0 then
-        dir = _mobileMoveVector
-    end
     if dir.Magnitude == 0 then
         if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + Camera.CFrame.LookVector end
         if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - Camera.CFrame.LookVector end
