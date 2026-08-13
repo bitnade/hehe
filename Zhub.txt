@@ -1111,46 +1111,74 @@ local function RunAutoShoot()
     -- 2. Input-specific firing method:
     pcall(function()
         if UserInputService.TouchEnabled then
-            -- MOBILE: Tap custom Shoot Button position
-            if ShootTargetWidget and ShootTargetWidget.Parent then
+            -- MOBILE: Fire input connections directly (most reliable on mobile executors)
+            local vp = Camera.ViewportSize
+            local posX, posY = vp.X / 2, vp.Y / 2
+
+            -- Use ShootTargetWidget position if available
+            if ShootTargetWidget and ShootTargetWidget.Parent and ShootTargetWidget.Visible then
                 local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
-                local posX, posY = centerPos.X, centerPos.Y
-                local touchPos = Vector2.new(posX, posY)
+                posX, posY = centerPos.X, centerPos.Y
+            end
 
-                -- Temporarily hide target widget so it doesn't absorb/block the touch tap
-                ShootTargetWidget.Visible = false
+            -- Create a fake InputObject table that mimics MouseButton1 press
+            local fakeInput = {
+                UserInputType = Enum.UserInputType.MouseButton1,
+                UserInputState = Enum.UserInputState.Begin,
+                Position = Vector3.new(posX, posY, 0),
+                Delta = Vector3.new(0, 0, 0),
+                KeyCode = Enum.KeyCode.Unknown
+            }
+            local fakeInputEnd = {
+                UserInputType = Enum.UserInputType.MouseButton1,
+                UserInputState = Enum.UserInputState.End,
+                Position = Vector3.new(posX, posY, 0),
+                Delta = Vector3.new(0, 0, 0),
+                KeyCode = Enum.KeyCode.Unknown
+            }
 
-                -- Method 1: VirtualInputManager Touch Event at (posX, posY)
-                pcall(function()
-                    VIM:SendTouchEvent(1001, Enum.UserInputState.Begin, touchPos)
-                    VIM:SendMouseButtonEvent(posX, posY, 0, true, game, 0)
-                end)
-
-                -- Method 2: Executor firesignal on any in-game GuiButton sitting under (posX, posY)
-                pcall(function()
-                    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-                        local guiObjects = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(posX, posY)
-                        for _, gui in ipairs(guiObjects) do
-                            if gui ~= ShootTargetWidget and not gui:IsDescendantOf(ScreenGui) then
-                                if gui:IsA("GuiButton") or gui:IsA("ImageButton") or gui:IsA("TextButton") then
-                                    if firesignal then
-                                        pcall(function() firesignal(gui.MouseButton1Click) end)
-                                        pcall(function() firesignal(gui.Activated) end)
-                                        pcall(function() firesignal(gui.TouchTap) end)
-                                    end
-                                end
+            -- Method 1: getconnections on UserInputService.InputBegan (MOST RELIABLE)
+            -- This directly fires the game's input handlers without any GUI or mouse involvement
+            local fired = false
+            pcall(function()
+                if getconnections then
+                    for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do
+                        pcall(function() conn:Fire(fakeInput, false) end)
+                    end
+                    fired = true
+                    task.delay(0.02, function()
+                        pcall(function()
+                            for _, conn in ipairs(getconnections(UserInputService.InputEnded)) do
+                                pcall(function() conn:Fire(fakeInputEnd, false) end)
                             end
-                        end
+                        end)
+                    end)
+                end
+            end)
+
+            -- Method 2: firesignal on UserInputService.InputBegan (fallback)
+            if not fired then
+                pcall(function()
+                    if firesignal then
+                        firesignal(UserInputService.InputBegan, fakeInput, false)
+                        fired = true
+                        task.delay(0.02, function()
+                            pcall(function()
+                                firesignal(UserInputService.InputEnded, fakeInputEnd, false)
+                            end)
+                        end)
                     end
                 end)
+            end
 
-                task.delay(0.025, function()
-                    pcall(function()
-                        VIM:SendTouchEvent(1001, Enum.UserInputState.End, touchPos)
-                        VIM:SendMouseButtonEvent(posX, posY, 0, false, game, 0)
-                    end)
-                    if ShootTargetWidget and _G.AutoShoot and UserInputService.TouchEnabled then
-                        ShootTargetWidget.Visible = true
+            -- Method 3: mouse1click (last resort, widely supported on all executors)
+            if not fired then
+                pcall(function()
+                    if mouse1click then
+                        mouse1click()
+                    elseif mouse1press then
+                        mouse1press()
+                        task.delay(0.02, function() pcall(mouse1release) end)
                     end
                 end)
             end
