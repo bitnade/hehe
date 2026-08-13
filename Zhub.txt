@@ -10,17 +10,14 @@ _G.ZHubFOVCircle = nil
 end
 
 local function PurgePreviousGUIs(parent)
-if not parent then return end
-for _, v in pairs(parent:GetChildren()) do
-    if v:IsA("ScreenGui") and (v.Name == "MovementPro" or v.Name == "ZHub" or string.find(v.Name, "Movement_Elite")) then
-    pcall(function() v:Destroy() end)
-    end
-end
-for _, v in pairs(parent:GetDescendants()) do
-    if v.Name == "FOVCircleGui" or v.Name == "ZHubFOVCircle" then
-    pcall(function() v:Destroy() end)
-    end
-end
+    if not parent then return end
+    pcall(function()
+        for _, v in ipairs(parent:GetChildren()) do
+            if v:IsA("ScreenGui") and (v.Name == "ZHub" or v.Name == "MovementPro" or string.find(v.Name, "Movement_Elite")) then
+                pcall(function() v:Destroy() end)
+            end
+        end
+    end)
 end
 
 PurgePreviousGUIs(game:GetService("CoreGui"))
@@ -91,7 +88,7 @@ _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
-_G.MobilePadEnabled = UserInputService.TouchEnabled -- true = show dedicated touch move joystick for mobile
+_G.MobilePadEnabled = false -- true = show dedicated touch move joystick for mobile
 _G.StickyJoystick = false -- true = sticky joystick mode (knob stays put when released)
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
@@ -234,6 +231,7 @@ MobilePadFrame.Position = UDim2.new(0, 40, 1, -180)
 MobilePadFrame.Size = UDim2.new(0, 130, 0, 130)
 MobilePadFrame.AnchorPoint = Vector2.new(0, 0)
 MobilePadFrame.Visible = _G.MobilePadEnabled
+MobilePadFrame.Active = false
 MobilePadFrame.Parent = ScreenGui
 ApplyCorner(MobilePadFrame, 999)
 ApplyStroke(MobilePadFrame, Color3.fromRGB(255, 255, 255), 2, 0.5)
@@ -881,29 +879,35 @@ do
     end
     end
 
+    local isTouch = UserInputService.TouchEnabled
     local FOVCircle = nil
-    pcall(function()
-        if Drawing and typeof(Drawing.new) == "function" then
-            FOVCircle = Drawing.new("Circle")
-            FOVCircle.Thickness = 2
-            FOVCircle.Color = Theme.Accent
-            FOVCircle.Filled = false
-            FOVCircle.Transparency = 1
-            FOVCircle.Radius = _G.AimFOV or 100
-            FOVCircle.Visible = false
-            _G.ZHubFOVCircle = FOVCircle
-        end
-    end)
 
-    -- GuiFOVCircle is ONLY created as a fallback if Drawing API is absent
+    -- On PC/non-touch devices, try Drawing API first
+    if not isTouch then
+        pcall(function()
+            if Drawing and typeof(Drawing.new) == "function" then
+                FOVCircle = Drawing.new("Circle")
+                FOVCircle.Thickness = 2
+                FOVCircle.Color = Theme.Accent
+                FOVCircle.Filled = false
+                FOVCircle.Transparency = 1
+                FOVCircle.Radius = _G.AimFOV or 100
+                FOVCircle.Visible = false
+                _G.ZHubFOVCircle = FOVCircle
+            end
+        end)
+    end
+
+    -- Create GuiFOVCircle on mobile OR if Drawing API is absent/failed
     local GuiFOVCircle = nil
-    if not FOVCircle then
+    if isTouch or not FOVCircle then
         GuiFOVCircle = Instance.new("Frame")
         GuiFOVCircle.Name = "FOVCircleGui"
         GuiFOVCircle.BackgroundTransparency = 1
         GuiFOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
         GuiFOVCircle.Visible = false
         GuiFOVCircle.ZIndex = 1000
+        GuiFOVCircle.Active = false -- Never block touch inputs on mobile
         GuiFOVCircle.Parent = ScreenGui
         ApplyCorner(GuiFOVCircle, 999)
         ApplyStroke(GuiFOVCircle, Theme.Accent, 2, 0)
