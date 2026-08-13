@@ -1112,79 +1112,81 @@ local function RunAutoShoot()
     -- 2. Input-specific firing method:
     pcall(function()
         if UserInputService.TouchEnabled then
-            -- MOBILE: Fire input connections directly (most reliable on mobile executors)
+            -- MOBILE (Delta executor compatible): Fire game's input connections directly
             local vp = Camera.ViewportSize
             local posX, posY = vp.X / 2, vp.Y / 2
 
-            -- Use ShootTargetWidget position if available
             if ShootTargetWidget and ShootTargetWidget.Parent and ShootTargetWidget.Visible then
                 local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
                 posX, posY = centerPos.X, centerPos.Y
             end
 
-            -- Create a fake InputObject table that mimics MouseButton1 press
-            local fakeInput = {
+            -- Helper: fire a single connection with args (Delta uses conn.Function, others use conn:Fire)
+            local function fireConn(conn, ...)
+                local args = {...}
+                pcall(function()
+                    if conn.Function then
+                        conn.Function(unpack(args))
+                    end
+                end)
+                pcall(function()
+                    if conn.Fire then
+                        conn:Fire(unpack(args))
+                    end
+                end)
+            end
+
+            -- Fire InputBegan with both MouseButton1 AND Touch (games check either one)
+            local fakeMouseDown = {
                 UserInputType = Enum.UserInputType.MouseButton1,
                 UserInputState = Enum.UserInputState.Begin,
                 Position = Vector3.new(posX, posY, 0),
                 Delta = Vector3.new(0, 0, 0),
                 KeyCode = Enum.KeyCode.Unknown
             }
-            local fakeInputEnd = {
+            local fakeTouchDown = {
+                UserInputType = Enum.UserInputType.Touch,
+                UserInputState = Enum.UserInputState.Begin,
+                Position = Vector3.new(posX, posY, 0),
+                Delta = Vector3.new(0, 0, 0),
+                KeyCode = Enum.KeyCode.Unknown
+            }
+            local fakeMouseUp = {
                 UserInputType = Enum.UserInputType.MouseButton1,
                 UserInputState = Enum.UserInputState.End,
                 Position = Vector3.new(posX, posY, 0),
                 Delta = Vector3.new(0, 0, 0),
                 KeyCode = Enum.KeyCode.Unknown
             }
+            local fakeTouchUp = {
+                UserInputType = Enum.UserInputType.Touch,
+                UserInputState = Enum.UserInputState.End,
+                Position = Vector3.new(posX, posY, 0),
+                Delta = Vector3.new(0, 0, 0),
+                KeyCode = Enum.KeyCode.Unknown
+            }
 
-            -- Method 1: getconnections on UserInputService.InputBegan (MOST RELIABLE)
-            -- This directly fires the game's input handlers without any GUI or mouse involvement
-            local fired = false
             pcall(function()
                 if getconnections then
-                    for _, conn in ipairs(getconnections(UserInputService.InputBegan)) do
-                        pcall(function() conn:Fire(fakeInput, false) end)
+                    local conns = getconnections(UserInputService.InputBegan)
+                    for i = 1, #conns do
+                        fireConn(conns[i], fakeMouseDown, false)
+                        fireConn(conns[i], fakeTouchDown, false)
                     end
-                    fired = true
+
                     task.delay(0.02, function()
                         pcall(function()
-                            for _, conn in ipairs(getconnections(UserInputService.InputEnded)) do
-                                pcall(function() conn:Fire(fakeInputEnd, false) end)
+                            local endConns = getconnections(UserInputService.InputEnded)
+                            for i = 1, #endConns do
+                                fireConn(endConns[i], fakeMouseUp, false)
+                                fireConn(endConns[i], fakeTouchUp, false)
                             end
                         end)
                     end)
                 end
             end)
-
-            -- Method 2: firesignal on UserInputService.InputBegan (fallback)
-            if not fired then
-                pcall(function()
-                    if firesignal then
-                        firesignal(UserInputService.InputBegan, fakeInput, false)
-                        fired = true
-                        task.delay(0.02, function()
-                            pcall(function()
-                                firesignal(UserInputService.InputEnded, fakeInputEnd, false)
-                            end)
-                        end)
-                    end
-                end)
-            end
-
-            -- Method 3: mouse1click (last resort, widely supported on all executors)
-            if not fired then
-                pcall(function()
-                    if mouse1click then
-                        mouse1click()
-                    elseif mouse1press then
-                        mouse1press()
-                        task.delay(0.02, function() pcall(mouse1release) end)
-                    end
-                end)
-            end
         else
-            -- PC: Old method via mouse click simulation (mouse1click / mouse1press / VIM mouse click)
+            -- PC: Old method via mouse click simulation
             if mouse1click then
                 mouse1click()
             elseif mouse1press then
