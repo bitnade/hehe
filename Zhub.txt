@@ -222,6 +222,12 @@ Main.Parent = ScreenGui
 ApplyCorner(Main, 12)
 ApplyStroke(Main, Theme.Border, 1)
 
+-- Mobile UI Scale (automatically scales entire UI smaller on mobile devices)
+local MainScale = Instance.new("UIScale")
+MainScale.Name = "MainScale"
+MainScale.Scale = UserInputService.TouchEnabled and 0.78 or 1.0
+MainScale.Parent = Main
+
 -- Glow Effect
 local Glow = Instance.new("ImageLabel")
 Glow.Name = "Glow"
