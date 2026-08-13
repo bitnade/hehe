@@ -41,8 +41,15 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat
+        task.wait()
+        LocalPlayer = Players.LocalPlayer
+    until LocalPlayer
+end
+
 local Mouse = LocalPlayer:GetMouse()
-local Camera = workspace.CurrentCamera
+local Camera = workspace.CurrentCamera or workspace:FindFirstChildWhichIsA("Camera")
 
 -- [[ THEME ]] --
 local Theme = {
@@ -85,6 +92,7 @@ _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
 _G.MobilePadEnabled = UserInputService.TouchEnabled -- true = show dedicated touch move joystick for mobile
+_G.StickyJoystick = false -- true = sticky joystick mode (knob stays put when released)
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
 _G.KillAuraRange = 20
@@ -108,6 +116,7 @@ local function SaveConfig()
                 TeamCheck = _G.TeamCheck,
                 AutoShoot = _G.AutoShoot,
                 MobilePadEnabled = _G.MobilePadEnabled,
+                StickyJoystick = _G.StickyJoystick,
                 ESPRange = _G.ESPRange,
                 ReachDistance = _G.ReachDistance,
                 KillAuraRange = _G.KillAuraRange,
@@ -132,6 +141,7 @@ local function LoadConfig()
                 if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
                 if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
                 if data.MobilePadEnabled ~= nil then _G.MobilePadEnabled = data.MobilePadEnabled end
+                if data.StickyJoystick ~= nil then _G.StickyJoystick = data.StickyJoystick end
                 if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
                 if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
                 if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
@@ -210,32 +220,69 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = parentContainer
 
--- [[ DEDICATED MOBILE MOVE PAD (JOYSTICK) ]] --
+-- [[ DEDICATED MOBILE MOVE PAD (JOYSTICK - NATIVE ROBLOX THUMBSTICK STYLE) ]] --
 local _mobileMoveVector = Vector3.new()
 local _padDragging = false
 local _padTouchInput = nil
+local _padKnobPos = Vector2.new(0, 0)
 
 local MobilePadFrame = Instance.new("Frame")
 MobilePadFrame.Name = "MobileMovePad"
-MobilePadFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-MobilePadFrame.BackgroundTransparency = 0.4
-MobilePadFrame.Position = UDim2.new(0, 35, 1, -175)
+MobilePadFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+MobilePadFrame.BackgroundTransparency = 0.65
+MobilePadFrame.Position = UDim2.new(0, 40, 1, -180)
 MobilePadFrame.Size = UDim2.new(0, 130, 0, 130)
 MobilePadFrame.AnchorPoint = Vector2.new(0, 0)
 MobilePadFrame.Visible = _G.MobilePadEnabled
 MobilePadFrame.Parent = ScreenGui
 ApplyCorner(MobilePadFrame, 999)
-ApplyStroke(MobilePadFrame, Theme.Accent, 2, 0.4)
+ApplyStroke(MobilePadFrame, Color3.fromRGB(255, 255, 255), 2, 0.5)
+
+-- Inner ring overlay (classic Roblox thumbstick ring graphics)
+local MobilePadInnerRing = Instance.new("Frame")
+MobilePadInnerRing.Name = "InnerRing"
+MobilePadInnerRing.BackgroundTransparency = 1
+MobilePadInnerRing.AnchorPoint = Vector2.new(0.5, 0.5)
+MobilePadInnerRing.Position = UDim2.new(0.5, 0, 0.5, 0)
+MobilePadInnerRing.Size = UDim2.new(0, 80, 0, 80)
+MobilePadInnerRing.Parent = MobilePadFrame
+ApplyCorner(MobilePadInnerRing, 999)
+ApplyStroke(MobilePadInnerRing, Color3.fromRGB(255, 255, 255), 1, 0.7)
+
+local StickyBadge = Instance.new("TextLabel")
+StickyBadge.Name = "StickyBadge"
+StickyBadge.BackgroundTransparency = 1
+StickyBadge.Position = UDim2.new(0, 0, 0, -22)
+StickyBadge.Size = UDim2.new(1, 0, 0, 16)
+StickyBadge.Font = Enum.Font.GothamBold
+StickyBadge.Text = "📌 STICKY"
+StickyBadge.TextColor3 = Theme.AccentGlow
+StickyBadge.TextSize = 10
+StickyBadge.Visible = _G.StickyJoystick
+StickyBadge.Parent = MobilePadFrame
 
 local MobilePadKnob = Instance.new("Frame")
 MobilePadKnob.Name = "Knob"
-MobilePadKnob.BackgroundColor3 = Theme.Accent
+MobilePadKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+MobilePadKnob.BackgroundTransparency = 0.35
 MobilePadKnob.AnchorPoint = Vector2.new(0.5, 0.5)
 MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
-MobilePadKnob.Size = UDim2.new(0, 48, 0, 48)
+MobilePadKnob.Size = UDim2.new(0, 52, 0, 52)
 MobilePadKnob.Parent = MobilePadFrame
 ApplyCorner(MobilePadKnob, 999)
-ApplyStroke(MobilePadKnob, Theme.Text, 2, 0.2)
+ApplyStroke(MobilePadKnob, Color3.fromRGB(255, 255, 255), 2, 0.3)
+
+-- Inner knob center dot (iconic Roblox mobile joystick center graphic)
+local KnobCenterDot = Instance.new("Frame")
+KnobCenterDot.Name = "CenterDot"
+KnobCenterDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+KnobCenterDot.BackgroundTransparency = 0.7
+KnobCenterDot.AnchorPoint = Vector2.new(0.5, 0.5)
+KnobCenterDot.Position = UDim2.new(0.5, 0, 0.5, 0)
+KnobCenterDot.Size = UDim2.new(0, 20, 0, 20)
+KnobCenterDot.Parent = MobilePadKnob
+ApplyCorner(KnobCenterDot, 999)
+ApplyStroke(KnobCenterDot, Color3.fromRGB(255, 255, 255), 1, 0.4)
 
 local function UpdateMobilePad(input)
     local center = MobilePadFrame.AbsolutePosition + (MobilePadFrame.AbsoluteSize / 2)
@@ -243,29 +290,47 @@ local function UpdateMobilePad(input)
     local delta = touchPos - center
     local maxRadius = MobilePadFrame.AbsoluteSize.X / 2
 
-    local dist = math.min(delta.Magnitude, maxRadius)
-    local dir = delta.Magnitude > 0 and delta.Unit or Vector2.new()
-    local knobPos = dir * dist
+    local rawDist = delta.Magnitude
+    local deadzone = 0.05
 
-    MobilePadKnob.Position = UDim2.new(0.5, knobPos.X, 0.5, knobPos.Y)
+    if rawDist < (maxRadius * deadzone) then
+        _padKnobPos = Vector2.new(0, 0)
+        MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+        _mobileMoveVector = Vector3.new()
+    else
+        local dist = math.min(rawDist, maxRadius)
+        local dir = delta.Unit
+        local knobPos = dir * dist
 
-    local normX = knobPos.X / maxRadius
-    local normY = knobPos.Y / maxRadius
+        MobilePadKnob.Position = UDim2.new(0.5, knobPos.X, 0.5, knobPos.Y)
 
-    local camCFrame = Camera.CFrame
-    local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
-    local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
+        local normDist = dist / maxRadius
+        local scaledDist = (normDist - deadzone) / (1 - deadzone)
+        _padKnobPos = dir * scaledDist
 
-    _mobileMoveVector = (right * normX) + (forward * (-normY))
+        local camCFrame = Camera.CFrame
+        local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
+        local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
+
+        _mobileMoveVector = (right * _padKnobPos.X) + (forward * (-_padKnobPos.Y))
+    end
 end
 
 local function ResetMobilePad()
     MobilePadKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
     _mobileMoveVector = Vector3.new()
+    _padKnobPos = Vector2.new(0, 0)
 end
 
 MobilePadFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local center = MobilePadFrame.AbsolutePosition + (MobilePadFrame.AbsoluteSize / 2)
+        local touchPos = Vector2.new(input.Position.X, input.Position.Y)
+        local delta = touchPos - center
+        if _G.StickyJoystick and not _padDragging and delta.Magnitude < 16 then
+            ResetMobilePad()
+            return
+        end
         _padDragging = true
         _padTouchInput = input
         UpdateMobilePad(input)
@@ -282,7 +347,9 @@ UserInputService.InputEnded:Connect(function(input)
     if input == _padTouchInput or input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         _padDragging = false
         _padTouchInput = nil
-        ResetMobilePad()
+        if not _G.StickyJoystick then
+            ResetMobilePad()
+        end
     end
 end)
 
@@ -361,38 +428,67 @@ SessionLabel.TextColor3 = Theme.TextMuted
 SessionLabel.TextSize = 11
 SessionLabel.Parent = Header
 
--- Window Controls
-local Controls = Instance.new("Frame")
-Controls.Name = "Controls"
-Controls.BackgroundTransparency = 1
-Controls.Position = UDim2.new(1, -80, 0, 0)
-Controls.Size = UDim2.new(0, 70, 1, 0)
-Controls.Parent = Header
+-- Window Controls (Scoped in do-end)
+do
+    local Controls = Instance.new("Frame")
+    Controls.Name = "Controls"
+    Controls.BackgroundTransparency = 1
+    Controls.Position = UDim2.new(1, -80, 0, 0)
+    Controls.Size = UDim2.new(0, 70, 1, 0)
+    Controls.Parent = Header
 
-local MinimizeBtn = Instance.new("TextButton")
-MinimizeBtn.Name = "Minimize"
-MinimizeBtn.BackgroundColor3 = Theme.SurfaceHover
-MinimizeBtn.Position = UDim2.new(0, 0, 0.5, -12)
-MinimizeBtn.Size = UDim2.new(0, 24, 0, 24)
-MinimizeBtn.Font = Enum.Font.GothamBold
-MinimizeBtn.Text = "−"
-MinimizeBtn.TextColor3 = Theme.TextMuted
-MinimizeBtn.TextSize = 16
-MinimizeBtn.Parent = Controls
-ApplyCorner(MinimizeBtn, 6)
+    local MinimizeBtn = Instance.new("TextButton")
+    MinimizeBtn.Name = "Minimize"
+    MinimizeBtn.BackgroundColor3 = Theme.SurfaceHover
+    MinimizeBtn.Position = UDim2.new(0, 0, 0.5, -12)
+    MinimizeBtn.Size = UDim2.new(0, 24, 0, 24)
+    MinimizeBtn.Font = Enum.Font.GothamBold
+    MinimizeBtn.Text = "−"
+    MinimizeBtn.TextColor3 = Theme.TextMuted
+    MinimizeBtn.TextSize = 16
+    MinimizeBtn.Parent = Controls
+    ApplyCorner(MinimizeBtn, 6)
 
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Name = "Close"
-CloseBtn.BackgroundColor3 = Theme.Danger
-CloseBtn.BackgroundTransparency = 0.8
-CloseBtn.Position = UDim2.new(0, 34, 0.5, -12)
-CloseBtn.Size = UDim2.new(0, 24, 0, 24)
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.Text = "×"
-CloseBtn.TextColor3 = Theme.Danger
-CloseBtn.TextSize = 16
-CloseBtn.Parent = Controls
-ApplyCorner(CloseBtn, 6)
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Name = "Close"
+    CloseBtn.BackgroundColor3 = Theme.Danger
+    CloseBtn.BackgroundTransparency = 0.8
+    CloseBtn.Position = UDim2.new(0, 34, 0.5, -12)
+    CloseBtn.Size = UDim2.new(0, 24, 0, 24)
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.Text = "×"
+    CloseBtn.TextColor3 = Theme.Danger
+    CloseBtn.TextSize = 16
+    CloseBtn.Parent = Controls
+    ApplyCorner(CloseBtn, 6)
+
+    CloseBtn.MouseButton1Click:Connect(function()
+        if _G.ZHubFOVCircle then pcall(function() _G.ZHubFOVCircle:Remove() end) end
+        CreateTween(Main, {Size = UDim2.new(0, 360, 0, 0), BackgroundTransparency = 1}, 0.3):Play()
+        task.wait(0.3)
+        ScreenGui:Destroy()
+    end)
+
+    local isMin = false
+    local savedPos = nil
+    MinimizeBtn.MouseButton1Click:Connect(function()
+        if isMin then return end
+        isMin = true
+        savedPos = Main.Position
+
+        local tweenOut = CreateTween(Main, {
+            Size = UDim2.new(0, 360, 0, 50),
+            BackgroundTransparency = 0.5
+        }, 0.25)
+        tweenOut:Play()
+        tweenOut.Completed:Wait()
+
+        Content.Visible = false
+        if OpenBtn then OpenBtn.Visible = true end
+        Main.Visible = false
+        isMin = false
+    end)
+end
 
 -- Content Area
 local Content = Instance.new("ScrollingFrame")
@@ -413,1040 +509,8 @@ ContentLayout.Padding = UDim.new(0, 10)
 ContentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 ContentLayout.Parent = Content
 
--- [[ INPUT SECTION ]] --
-local InputSection = Instance.new("Frame")
-InputSection.Name = "InputSection"
-InputSection.BackgroundTransparency = 1
-InputSection.Size = UDim2.new(1, 0, 0, 45)
-InputSection.Parent = Content
-
-local InputLayout = Instance.new("UIListLayout")
-InputLayout.FillDirection = Enum.FillDirection.Horizontal
-InputLayout.Padding = UDim.new(0, 10)
-InputLayout.Parent = InputSection
-
-local function CreateInputBox(name, placeholder, width, parentFrame)
-    local Container = Instance.new("Frame")
-    Container.Name = name
-    Container.BackgroundColor3 = Theme.Surface
-    Container.Size = UDim2.new(0, width, 0, 40)
-    Container.Parent = parentFrame or InputSection
-    ApplyCorner(Container, 8)
-    ApplyStroke(Container, Theme.Border, 1) 
-
-    local Icon = Instance.new("TextLabel")
-    Icon.BackgroundTransparency = 1
-    Icon.Position = UDim2.new(0, 12, 0, 0)
-    Icon.Size = UDim2.new(0, 20, 1, 0)
-    Icon.Font = Enum.Font.GothamBold
-    Icon.Text = name == "Speed" and "⚡" or (name == "KillAuraRange" and "💀" or (name == "AimFOV" and "🎯" or "⏱"))
-    Icon.TextColor3 = Theme.Accent
-    Icon.TextSize = 14
-    Icon.Parent = Container
-
-    local Input = Instance.new("TextBox")
-    Input.Name = "Input"
-    Input.BackgroundTransparency = 1
-    Input.Position = UDim2.new(0, 35, 0, 0)
-    Input.Size = UDim2.new(1, -45, 1, 0)
-    Input.Font = Enum.Font.GothamMedium
-    Input.PlaceholderText = placeholder
-    Input.Text = ""
-    Input.TextColor3 = Theme.Text
-    Input.PlaceholderColor3 = Theme.TextMuted
-    Input.TextSize = 12
-    Input.TextXAlignment = Enum.TextXAlignment.Left
-    Input.ClearTextOnFocus = false
-    Input.Parent = Container
-
-    return Input, Container
-end
-
-local SpeedInput, SpeedContainer = CreateInputBox("Speed", "Speed: 50", 155, InputSection)
-local TimeInput, TimeContainer = CreateInputBox("Time", "Time: 1x", 155, InputSection)
-
-SpeedInput.Text = "50"
-TimeInput.Text = "1x"
-
--- [[ REACH INPUT SECTION ]] --
-local ReachInputSection = Instance.new("Frame")
-ReachInputSection.Name = "ReachInputSection"
-ReachInputSection.BackgroundTransparency = 1
-ReachInputSection.Size = UDim2.new(1, 0, 0, 45)
-ReachInputSection.Parent = Content
-
-local ReachInputLayout = Instance.new("UIListLayout")
-ReachInputLayout.FillDirection = Enum.FillDirection.Horizontal
-ReachInputLayout.Padding = UDim.new(0, 10)
-ReachInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ReachInputLayout.Parent = ReachInputSection
-
-local ReachContainer = Instance.new("Frame")
-ReachContainer.Name = "Reach"
-ReachContainer.BackgroundColor3 = Theme.Surface
-ReachContainer.Size = UDim2.new(0, 320, 0, 40)
-ReachContainer.Parent = ReachInputSection
-ApplyCorner(ReachContainer, 8)
-ApplyStroke(ReachContainer, Theme.Border, 1)
-
-local ReachIcon = Instance.new("TextLabel")
-ReachIcon.BackgroundTransparency = 1
-ReachIcon.Position = UDim2.new(0, 12, 0, 0)
-ReachIcon.Size = UDim2.new(0, 20, 1, 0)
-ReachIcon.Font = Enum.Font.GothamBold
-ReachIcon.Text = "🗡"
-ReachIcon.TextColor3 = Theme.Accent
-ReachIcon.TextSize = 14
-ReachIcon.Parent = ReachContainer
-
-local ReachLabel = Instance.new("TextLabel")
-ReachLabel.BackgroundTransparency = 1
-ReachLabel.Position = UDim2.new(0, 35, 0, 0)
-ReachLabel.Size = UDim2.new(0, 80, 1, 0)
-ReachLabel.Font = Enum.Font.GothamMedium
-ReachLabel.Text = "Reach:"
-ReachLabel.TextColor3 = Theme.TextMuted
-ReachLabel.TextSize = 12
-ReachLabel.TextXAlignment = Enum.TextXAlignment.Left
-ReachLabel.Parent = ReachContainer
-
-local ReachInput = Instance.new("TextBox")
-ReachInput.Name = "Input"
-ReachInput.BackgroundTransparency = 1
-ReachInput.Position = UDim2.new(0, 115, 0, 0)
-ReachInput.Size = UDim2.new(0, 60, 1, 0)
-ReachInput.Font = Enum.Font.GothamMedium
-ReachInput.PlaceholderText = "15"
-ReachInput.Text = "15"
-ReachInput.TextColor3 = Theme.Text
-ReachInput.PlaceholderColor3 = Theme.TextMuted
-ReachInput.TextSize = 12
-ReachInput.TextXAlignment = Enum.TextXAlignment.Left
-ReachInput.ClearTextOnFocus = false
-ReachInput.Parent = ReachContainer
-
-local ReachUnit = Instance.new("TextLabel")
-ReachUnit.BackgroundTransparency = 1
-ReachUnit.Position = UDim2.new(0, 175, 0, 0)
-ReachUnit.Size = UDim2.new(0, 60, 1, 0)
-ReachUnit.Font = Enum.Font.GothamMedium
-ReachUnit.Text = "studs"
-ReachUnit.TextColor3 = Theme.TextMuted
-ReachUnit.TextSize = 11
-ReachUnit.TextXAlignment = Enum.TextXAlignment.Left
-ReachUnit.Parent = ReachContainer
-
--- [[ KILL AURA RANGE INPUT SECTION ]] --
-local KillAuraInputSection = Instance.new("Frame")
-KillAuraInputSection.Name = "KillAuraInputSection"
-KillAuraInputSection.BackgroundTransparency = 1
-KillAuraInputSection.Size = UDim2.new(1, 0, 0, 45)
-KillAuraInputSection.Parent = Content
-
-local KillAuraInputLayout = Instance.new("UIListLayout")
-KillAuraInputLayout.FillDirection = Enum.FillDirection.Horizontal
-KillAuraInputLayout.Padding = UDim.new(0, 10)
-KillAuraInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-KillAuraInputLayout.Parent = KillAuraInputSection
-
-local KillAuraContainer = Instance.new("Frame")
-KillAuraContainer.Name = "KillAuraRange"
-KillAuraContainer.BackgroundColor3 = Theme.Surface
-KillAuraContainer.Size = UDim2.new(0, 320, 0, 40)
-KillAuraContainer.Parent = KillAuraInputSection
-ApplyCorner(KillAuraContainer, 8)
-ApplyStroke(KillAuraContainer, Theme.Border, 1)
-
-local KillAuraIcon = Instance.new("TextLabel")
-KillAuraIcon.BackgroundTransparency = 1
-KillAuraIcon.Position = UDim2.new(0, 12, 0, 0)
-KillAuraIcon.Size = UDim2.new(0, 20, 1, 0)
-KillAuraIcon.Font = Enum.Font.GothamBold
-KillAuraIcon.Text = "💀"
-KillAuraIcon.TextColor3 = Theme.Accent
-KillAuraIcon.TextSize = 14
-KillAuraIcon.Parent = KillAuraContainer
-
-local KillAuraRangeLabel = Instance.new("TextLabel")
-KillAuraRangeLabel.BackgroundTransparency = 1
-KillAuraRangeLabel.Position = UDim2.new(0, 35, 0, 0)
-KillAuraRangeLabel.Size = UDim2.new(0, 80, 1, 0)
-KillAuraRangeLabel.Font = Enum.Font.GothamMedium
-KillAuraRangeLabel.Text = "Aura Range:"
-KillAuraRangeLabel.TextColor3 = Theme.TextMuted
-KillAuraRangeLabel.TextSize = 12
-KillAuraRangeLabel.TextXAlignment = Enum.TextXAlignment.Left
-KillAuraRangeLabel.Parent = KillAuraContainer
-
-local KillAuraRangeInput = Instance.new("TextBox")
-KillAuraRangeInput.Name = "Input"
-KillAuraRangeInput.BackgroundTransparency = 1
-KillAuraRangeInput.Position = UDim2.new(0, 115, 0, 0)
-KillAuraRangeInput.Size = UDim2.new(0, 60, 1, 0)
-KillAuraRangeInput.Font = Enum.Font.GothamMedium
-KillAuraRangeInput.PlaceholderText = "20"
-KillAuraRangeInput.Text = "20"
-KillAuraRangeInput.TextColor3 = Theme.Text
-KillAuraRangeInput.PlaceholderColor3 = Theme.TextMuted
-KillAuraRangeInput.TextSize = 12
-KillAuraRangeInput.TextXAlignment = Enum.TextXAlignment.Left
-KillAuraRangeInput.ClearTextOnFocus = false
-KillAuraRangeInput.Parent = KillAuraContainer
-
-local KillAuraRangeUnit = Instance.new("TextLabel")
-KillAuraRangeUnit.BackgroundTransparency = 1
-KillAuraRangeUnit.Position = UDim2.new(0, 175, 0, 0)
-KillAuraRangeUnit.Size = UDim2.new(0, 60, 1, 0)
-KillAuraRangeUnit.Font = Enum.Font.GothamMedium
-KillAuraRangeUnit.Text = "studs"
-KillAuraRangeUnit.TextColor3 = Theme.TextMuted
-KillAuraRangeUnit.TextSize = 11
-KillAuraRangeUnit.TextXAlignment = Enum.TextXAlignment.Left
-KillAuraRangeUnit.Parent = KillAuraContainer
-
--- [[ ESP RANGE INPUT SECTION ]] --
-local ESPRangeInputSection = Instance.new("Frame")
-ESPRangeInputSection.Name = "ESPRangeInputSection"
-ESPRangeInputSection.BackgroundTransparency = 1
-ESPRangeInputSection.Size = UDim2.new(1, 0, 0, 45)
-ESPRangeInputSection.Parent = Content
-
-local ESPRangeInputLayout = Instance.new("UIListLayout")
-ESPRangeInputLayout.FillDirection = Enum.FillDirection.Horizontal
-ESPRangeInputLayout.Padding = UDim.new(0, 10)
-ESPRangeInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ESPRangeInputLayout.Parent = ESPRangeInputSection
-
-local ESPRangeContainer = Instance.new("Frame")
-ESPRangeContainer.Name = "ESPRange"
-ESPRangeContainer.BackgroundColor3 = Theme.Surface
-ESPRangeContainer.Size = UDim2.new(0, 320, 0, 40)
-ESPRangeContainer.Parent = ESPRangeInputSection
-ApplyCorner(ESPRangeContainer, 8)
-ApplyStroke(ESPRangeContainer, Theme.Border, 1)
-
-local ESPRangeIcon = Instance.new("TextLabel")
-ESPRangeIcon.BackgroundTransparency = 1
-ESPRangeIcon.Position = UDim2.new(0, 12, 0, 0)
-ESPRangeIcon.Size = UDim2.new(0, 20, 1, 0)
-ESPRangeIcon.Font = Enum.Font.GothamBold
-ESPRangeIcon.Text = "👁"
-ESPRangeIcon.TextColor3 = Theme.Accent
-ESPRangeIcon.TextSize = 14
-ESPRangeIcon.Parent = ESPRangeContainer
-
-local ESPRangeLabel = Instance.new("TextLabel")
-ESPRangeLabel.BackgroundTransparency = 1
-ESPRangeLabel.Position = UDim2.new(0, 35, 0, 0)
-ESPRangeLabel.Size = UDim2.new(0, 90, 1, 0)
-ESPRangeLabel.Font = Enum.Font.GothamMedium
-ESPRangeLabel.Text = "ESP Range:"
-ESPRangeLabel.TextColor3 = Theme.TextMuted
-ESPRangeLabel.TextSize = 12
-ESPRangeLabel.TextXAlignment = Enum.TextXAlignment.Left
-ESPRangeLabel.Parent = ESPRangeContainer
-
-local ESPRangeInput = Instance.new("TextBox")
-ESPRangeInput.Name = "Input"
-ESPRangeInput.BackgroundTransparency = 1
-ESPRangeInput.Position = UDim2.new(0, 125, 0, 0)
-ESPRangeInput.Size = UDim2.new(0, 60, 1, 0)
-ESPRangeInput.Font = Enum.Font.GothamMedium
-ESPRangeInput.PlaceholderText = "1000"
-ESPRangeInput.Text = "1000"
-ESPRangeInput.TextColor3 = Theme.Text
-ESPRangeInput.PlaceholderColor3 = Theme.TextMuted
-ESPRangeInput.TextSize = 12
-ESPRangeInput.TextXAlignment = Enum.TextXAlignment.Left
-ESPRangeInput.ClearTextOnFocus = false
-ESPRangeInput.Parent = ESPRangeContainer
-
-local ESPRangeUnit = Instance.new("TextLabel")
-ESPRangeUnit.BackgroundTransparency = 1
-ESPRangeUnit.Position = UDim2.new(0, 185, 0, 0)
-ESPRangeUnit.Size = UDim2.new(0, 60, 1, 0)
-ESPRangeUnit.Font = Enum.Font.GothamMedium
-ESPRangeUnit.Text = "studs"
-ESPRangeUnit.TextColor3 = Theme.TextMuted
-ESPRangeUnit.TextSize = 11
-ESPRangeUnit.TextXAlignment = Enum.TextXAlignment.Left
-ESPRangeUnit.Parent = ESPRangeContainer
-
--- [[ AIM FOV SLIDER SECTION ]] --
-local AimFOVSliderFrame = Instance.new("Frame")
-AimFOVSliderFrame.Name = "AimFOVSliderFrame"
-AimFOVSliderFrame.BackgroundColor3 = Theme.Surface
-AimFOVSliderFrame.Size = UDim2.new(0, 320, 0, 50)
-AimFOVSliderFrame.Parent = Content
-ApplyCorner(AimFOVSliderFrame, 8)
-ApplyStroke(AimFOVSliderFrame, Theme.Border, 1)
-
-local AimFOVIcon = Instance.new("TextLabel")
-AimFOVIcon.BackgroundTransparency = 1
-AimFOVIcon.Position = UDim2.new(0, 12, 0, 6)
-AimFOVIcon.Size = UDim2.new(0, 20, 0, 20)
-AimFOVIcon.Font = Enum.Font.GothamBold
-AimFOVIcon.Text = "🎯"
-AimFOVIcon.TextColor3 = Theme.Accent
-AimFOVIcon.TextSize = 14
-AimFOVIcon.Parent = AimFOVSliderFrame
-
-local AimFOVTitle = Instance.new("TextLabel")
-AimFOVTitle.BackgroundTransparency = 1
-AimFOVTitle.Position = UDim2.new(0, 35, 0, 6)
-AimFOVTitle.Size = UDim2.new(0, 120, 0, 20)
-AimFOVTitle.Font = Enum.Font.GothamMedium
-AimFOVTitle.Text = "Aim FOV Slider"
-AimFOVTitle.TextColor3 = Theme.TextMuted
-AimFOVTitle.TextSize = 12
-AimFOVTitle.TextXAlignment = Enum.TextXAlignment.Left
-AimFOVTitle.Parent = AimFOVSliderFrame
-
-local AimFOVInput = Instance.new("TextBox")
-AimFOVInput.Name = "Input"
-AimFOVInput.BackgroundTransparency = 1
-AimFOVInput.Position = UDim2.new(1, -75, 0, 6)
-AimFOVInput.Size = UDim2.new(0, 60, 0, 20)
-AimFOVInput.Font = Enum.Font.GothamBold
-AimFOVInput.Text = tostring(_G.AimFOV) .. " px"
-AimFOVInput.TextColor3 = Theme.Accent
-AimFOVInput.TextSize = 12
-AimFOVInput.TextXAlignment = Enum.TextXAlignment.Right
-AimFOVInput.ClearTextOnFocus = false
-AimFOVInput.Parent = AimFOVSliderFrame
-
--- Track Line
-local AimFOVTrack = Instance.new("Frame")
-AimFOVTrack.Name = "Track"
-AimFOVTrack.BackgroundColor3 = Theme.SurfaceHover
-AimFOVTrack.Position = UDim2.new(0, 12, 0, 32)
-AimFOVTrack.Size = UDim2.new(1, -24, 0, 6)
-AimFOVTrack.Parent = AimFOVSliderFrame
-ApplyCorner(AimFOVTrack, 3)
-
--- Fill Bar
-local AimFOVFill = Instance.new("Frame")
-AimFOVFill.Name = "Fill"
-AimFOVFill.BackgroundColor3 = Theme.Accent
-local minFOV, maxFOV = 10, 600
-local initialPct = math.clamp((_G.AimFOV - minFOV) / (maxFOV - minFOV), 0, 1)
-AimFOVFill.Size = UDim2.new(initialPct, 0, 1, 0)
-AimFOVFill.Parent = AimFOVTrack
-ApplyCorner(AimFOVFill, 3)
-
--- Knob / Handle
-local AimFOVKnob = Instance.new("Frame")
-AimFOVKnob.Name = "Knob"
-AimFOVKnob.BackgroundColor3 = Theme.Text
-AimFOVKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-AimFOVKnob.Position = UDim2.new(initialPct, 0, 0.5, 0)
-AimFOVKnob.Size = UDim2.new(0, 14, 0, 14)
-AimFOVKnob.Parent = AimFOVTrack
-ApplyCorner(AimFOVKnob, 7)
-ApplyStroke(AimFOVKnob, Theme.Accent, 2)
-
-local fovDragging = false
-
-local function UpdateFOVSlider(input)
-    local trackPos = AimFOVTrack.AbsolutePosition.X
-    local trackWidth = AimFOVTrack.AbsoluteSize.X
-    local mouseX = input.Position.X
-    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
-
-    local val = math.floor(minFOV + (maxFOV - minFOV) * pct)
-    _G.AimFOV = val
-    AimFOVFill.Size = UDim2.new(pct, 0, 1, 0)
-    AimFOVKnob.Position = UDim2.new(pct, 0, 0.5, 0)
-    AimFOVInput.Text = tostring(val) .. " px"
-    SaveConfig()
-end
-
-AimFOVTrack.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        fovDragging = true
-        UpdateFOVSlider(input)
-    end
-end)
-
-
--- [[ HEADSHOT RATE SLIDER SECTION ]] --
-local HeadshotSliderFrame = Instance.new("Frame")
-HeadshotSliderFrame.Name = "HeadshotSliderFrame"
-HeadshotSliderFrame.BackgroundColor3 = Theme.Surface
-HeadshotSliderFrame.Size = UDim2.new(0, 320, 0, 50)
-HeadshotSliderFrame.Parent = Content
-ApplyCorner(HeadshotSliderFrame, 8)
-ApplyStroke(HeadshotSliderFrame, Theme.Border, 1)
-
-local HeadshotIcon = Instance.new("TextLabel")
-HeadshotIcon.BackgroundTransparency = 1
-HeadshotIcon.Position = UDim2.new(0, 12, 0, 6)
-HeadshotIcon.Size = UDim2.new(0, 20, 0, 20)
-HeadshotIcon.Font = Enum.Font.GothamBold
-HeadshotIcon.Text = "💀"
-HeadshotIcon.TextColor3 = Theme.Danger
-HeadshotIcon.TextSize = 14
-HeadshotIcon.Parent = HeadshotSliderFrame
-
-local HeadshotTitle = Instance.new("TextLabel")
-HeadshotTitle.BackgroundTransparency = 1
-HeadshotTitle.Position = UDim2.new(0, 35, 0, 6)
-HeadshotTitle.Size = UDim2.new(0, 130, 0, 20)
-HeadshotTitle.Font = Enum.Font.GothamMedium
-HeadshotTitle.Text = "Headshot Rate"
-HeadshotTitle.TextColor3 = Theme.TextMuted
-HeadshotTitle.TextSize = 12
-HeadshotTitle.TextXAlignment = Enum.TextXAlignment.Left
-HeadshotTitle.Parent = HeadshotSliderFrame
-
-local HeadshotValueLabel = Instance.new("TextLabel")
-HeadshotValueLabel.Name = "Value"
-HeadshotValueLabel.BackgroundTransparency = 1
-HeadshotValueLabel.Position = UDim2.new(1, -75, 0, 6)
-HeadshotValueLabel.Size = UDim2.new(0, 60, 0, 20)
-HeadshotValueLabel.Font = Enum.Font.GothamBold
-HeadshotValueLabel.Text = tostring(math.floor(_G.HeadshotChance * 100)) .. "%"
-HeadshotValueLabel.TextColor3 = Theme.Danger
-HeadshotValueLabel.TextSize = 12
-HeadshotValueLabel.TextXAlignment = Enum.TextXAlignment.Right
-HeadshotValueLabel.Parent = HeadshotSliderFrame
-
-local HeadshotTrack = Instance.new("Frame")
-HeadshotTrack.Name = "Track"
-HeadshotTrack.BackgroundColor3 = Theme.SurfaceHover
-HeadshotTrack.Position = UDim2.new(0, 12, 0, 32)
-HeadshotTrack.Size = UDim2.new(1, -24, 0, 6)
-HeadshotTrack.Parent = HeadshotSliderFrame
-ApplyCorner(HeadshotTrack, 3)
-
-local HeadshotFill = Instance.new("Frame")
-HeadshotFill.Name = "Fill"
-HeadshotFill.BackgroundColor3 = Theme.Danger
-local hsInitialPct = math.clamp(_G.HeadshotChance, 0, 1)
-HeadshotFill.Size = UDim2.new(hsInitialPct, 0, 1, 0)
-HeadshotFill.Parent = HeadshotTrack
-ApplyCorner(HeadshotFill, 3)
-
-local HeadshotKnob = Instance.new("Frame")
-HeadshotKnob.Name = "Knob"
-HeadshotKnob.BackgroundColor3 = Theme.Text
-HeadshotKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-HeadshotKnob.Position = UDim2.new(hsInitialPct, 0, 0.5, 0)
-HeadshotKnob.Size = UDim2.new(0, 14, 0, 14)
-HeadshotKnob.Parent = HeadshotTrack
-ApplyCorner(HeadshotKnob, 7)
-ApplyStroke(HeadshotKnob, Theme.Danger, 2)
-
-local headshotDragging = false
-
-local function UpdateHeadshotSlider(input)
-    local trackPos = HeadshotTrack.AbsolutePosition.X
-    local trackWidth = HeadshotTrack.AbsoluteSize.X
-    local mouseX = input.Position.X
-    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
-    _G.HeadshotChance = pct
-    HeadshotFill.Size = UDim2.new(pct, 0, 1, 0)
-    HeadshotKnob.Position = UDim2.new(pct, 0, 0.5, 0)
-    HeadshotValueLabel.Text = tostring(math.floor(pct * 100)) .. "%"
-end
-
-HeadshotTrack.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        headshotDragging = true
-        UpdateHeadshotSlider(input)
-    end
-end)
-
--- [[ AIM SMOOTHNESS SLIDER SECTION ]] --
-local SmoothnessSliderFrame = Instance.new("Frame")
-SmoothnessSliderFrame.Name = "SmoothnessSliderFrame"
-SmoothnessSliderFrame.BackgroundColor3 = Theme.Surface
-SmoothnessSliderFrame.Size = UDim2.new(0, 320, 0, 50)
-SmoothnessSliderFrame.Parent = Content
-ApplyCorner(SmoothnessSliderFrame, 8)
-ApplyStroke(SmoothnessSliderFrame, Theme.Border, 1)
-
-local SmoothnessIcon = Instance.new("TextLabel")
-SmoothnessIcon.BackgroundTransparency = 1
-SmoothnessIcon.Position = UDim2.new(0, 12, 0, 6)
-SmoothnessIcon.Size = UDim2.new(0, 20, 0, 20)
-SmoothnessIcon.Font = Enum.Font.GothamBold
-SmoothnessIcon.Text = "🎚"
-SmoothnessIcon.TextColor3 = Theme.Warning
-SmoothnessIcon.TextSize = 14
-SmoothnessIcon.Parent = SmoothnessSliderFrame
-
-local SmoothnessTitle = Instance.new("TextLabel")
-SmoothnessTitle.BackgroundTransparency = 1
-SmoothnessTitle.Position = UDim2.new(0, 35, 0, 6)
-SmoothnessTitle.Size = UDim2.new(0, 140, 0, 20)
-SmoothnessTitle.Font = Enum.Font.GothamMedium
-SmoothnessTitle.Text = "Aim Smoothness"
-SmoothnessTitle.TextColor3 = Theme.TextMuted
-SmoothnessTitle.TextSize = 12
-SmoothnessTitle.TextXAlignment = Enum.TextXAlignment.Left
-SmoothnessTitle.Parent = SmoothnessSliderFrame
-
-local SmoothnessValueLabel = Instance.new("TextLabel")
-SmoothnessValueLabel.Name = "Value"
-SmoothnessValueLabel.BackgroundTransparency = 1
-SmoothnessValueLabel.Position = UDim2.new(1, -75, 0, 6)
-SmoothnessValueLabel.Size = UDim2.new(0, 60, 0, 20)
-SmoothnessValueLabel.Font = Enum.Font.GothamBold
-SmoothnessValueLabel.Text = string.format("%.2f", _G.AimSmoothness)
-SmoothnessValueLabel.TextColor3 = Theme.Warning
-SmoothnessValueLabel.TextSize = 12
-SmoothnessValueLabel.TextXAlignment = Enum.TextXAlignment.Right
-SmoothnessValueLabel.Parent = SmoothnessSliderFrame
-
-local SmoothnessTrack = Instance.new("Frame")
-SmoothnessTrack.Name = "Track"
-SmoothnessTrack.BackgroundColor3 = Theme.SurfaceHover
-SmoothnessTrack.Position = UDim2.new(0, 12, 0, 32)
-SmoothnessTrack.Size = UDim2.new(1, -24, 0, 6)
-SmoothnessTrack.Parent = SmoothnessSliderFrame
-ApplyCorner(SmoothnessTrack, 3)
-
-local minSmooth, maxSmooth = 0.01, 1.0
-local smInitialPct = math.clamp((_G.AimSmoothness - minSmooth) / (maxSmooth - minSmooth), 0, 1)
-
-local SmoothnessFill = Instance.new("Frame")
-SmoothnessFill.Name = "Fill"
-SmoothnessFill.BackgroundColor3 = Theme.Warning
-SmoothnessFill.Size = UDim2.new(smInitialPct, 0, 1, 0)
-SmoothnessFill.Parent = SmoothnessTrack
-ApplyCorner(SmoothnessFill, 3)
-
-local SmoothnessKnob = Instance.new("Frame")
-SmoothnessKnob.Name = "Knob"
-SmoothnessKnob.BackgroundColor3 = Theme.Text
-SmoothnessKnob.AnchorPoint = Vector2.new(0.5, 0.5)
-SmoothnessKnob.Position = UDim2.new(smInitialPct, 0, 0.5, 0)
-SmoothnessKnob.Size = UDim2.new(0, 14, 0, 14)
-SmoothnessKnob.Parent = SmoothnessTrack
-ApplyCorner(SmoothnessKnob, 7)
-ApplyStroke(SmoothnessKnob, Theme.Warning, 2)
-
-local smoothDragging = false
-
-local function UpdateSmoothnessSlider(input)
-    local trackPos = SmoothnessTrack.AbsolutePosition.X
-    local trackWidth = SmoothnessTrack.AbsoluteSize.X
-    local mouseX = input.Position.X
-    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
-    local val = minSmooth + (maxSmooth - minSmooth) * pct
-    _G.AimSmoothness = val
-    SmoothnessFill.Size = UDim2.new(pct, 0, 1, 0)
-    SmoothnessKnob.Position = UDim2.new(pct, 0, 0.5, 0)
-    SmoothnessValueLabel.Text = string.format("%.2f", val)
-end
-
-SmoothnessTrack.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        smoothDragging = true
-        UpdateSmoothnessSlider(input)
-    end
-end)
-
--- Forward-declare drag variables (used by consolidated handler below AND drag sections later)
-local openBtnDragging, openBtnDragInput, openBtnDragStart, openBtnStartPos
-local dragging, dragInput, dragStart, startPos
-
--- [[ CONSOLIDATED INPUT HANDLERS (performance: 1 connection instead of many) ]] --
-UserInputService.InputChanged:Connect(function(input)
-    local isMouse = input.UserInputType == Enum.UserInputType.MouseMovement
-    local isTouch = input.UserInputType == Enum.UserInputType.Touch
-    if not isMouse and not isTouch then return end
-
-    -- Slider drags
-    if fovDragging then UpdateFOVSlider(input) end
-    if headshotDragging then UpdateHeadshotSlider(input) end
-    if smoothDragging then UpdateSmoothnessSlider(input) end
-
-    -- Window / button drags
-    if input == openBtnDragInput and openBtnDragging then
-        local delta = input.Position - openBtnDragStart
-        OpenBtn.Position = UDim2.new(openBtnStartPos.X.Scale, openBtnStartPos.X.Offset + delta.X, openBtnStartPos.Y.Scale, openBtnStartPos.Y.Offset + delta.Y)
-    end
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if fovDragging or headshotDragging or smoothDragging then
-            SaveConfig()
-        end
-        fovDragging = false
-        headshotDragging = false
-        smoothDragging = false
-    end
-end)
-
--- [[ TOGGLE BUTTONS SECTION ]] --
-local ToggleGrid = Instance.new("Frame")
-ToggleGrid.Name = "ToggleGrid"
-ToggleGrid.BackgroundTransparency = 1
-ToggleGrid.AutomaticSize = Enum.AutomaticSize.Y
-ToggleGrid.Size = UDim2.new(1, 0, 0, 470)
-ToggleGrid.Parent = Content
-
-local GridLayout = Instance.new("UIGridLayout")
-GridLayout.CellSize = UDim2.new(0, 155, 0, 40)
-GridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
-GridLayout.Parent = ToggleGrid
-
-local function CreateToggleButton(name, icon, isActive)
-    local Button = Instance.new("TextButton")
-    Button.Name = name
-    Button.BackgroundColor3 = isActive and Theme.Accent or Theme.Surface
-    Button.Size = UDim2.new(0, 155, 0, 40)
-    Button.Font = Enum.Font.GothamBold
-    Button.Text = ""
-    Button.AutoButtonColor = false
-    Button.Parent = ToggleGrid
-    ApplyCorner(Button, 8)
-
-    local stroke = ApplyStroke(Button, isActive and Theme.AccentGlow or Theme.Border, 1)
-
-    local IconLabel = Instance.new("TextLabel")
-    IconLabel.Name = "Icon"
-    IconLabel.BackgroundTransparency = 1
-    IconLabel.Position = UDim2.new(0, 12, 0, 0)
-    IconLabel.Size = UDim2.new(0, 20, 1, 0)
-    IconLabel.Font = Enum.Font.SourceSans
-    IconLabel.Text = icon
-    IconLabel.TextColor3 = isActive and Theme.Text or Theme.TextMuted
-    IconLabel.TextSize = 16
-    IconLabel.Parent = Button
-
-    local Label = Instance.new("TextLabel")
-    Label.Name = "Label"
-    Label.BackgroundTransparency = 1
-    Label.Position = UDim2.new(0, 35, 0, 0)
-    Label.Size = UDim2.new(1, -70, 1, 0)
-    Label.Font = Enum.Font.GothamMedium
-    Label.Text = name
-    Label.TextColor3 = isActive and Theme.Text or Theme.TextMuted
-    Label.TextSize = 11
-    Label.TextXAlignment = Enum.TextXAlignment.Left
-    Label.Parent = Button
-
-    local Status = Instance.new("Frame")
-    Status.Name = "Status"
-    Status.BackgroundColor3 = isActive and Theme.Success or Theme.Danger
-    Status.Position = UDim2.new(1, -20, 0.5, -5)
-    Status.Size = UDim2.new(0, 10, 0, 10)
-    Status.Parent = Button
-    ApplyCorner(Status, 999)
-
-    local function UpdateState(active)
-        Button.BackgroundColor3 = active and Theme.Accent or Theme.Surface
-        IconLabel.TextColor3 = active and Theme.Text or Theme.TextMuted
-        Label.TextColor3 = active and Theme.Text or Theme.TextMuted
-        Status.BackgroundColor3 = active and Theme.Success or Theme.Danger
-        stroke.Color = active and Theme.AccentGlow or Theme.Border
-    end
-
-    return Button, UpdateState
-end
-
--- Primary Aim & Mobile Buttons at top for instant access
-local AutoAimBtn,   UpdateAutoAim        = CreateToggleButton("Auto Aim [T]", "🎯", false)
-local AutoShootBtn, UpdateAutoShoot      = CreateToggleButton("Auto Shoot",   "🔫", _G.AutoShoot)
-local AimModeBtn,   UpdateAimMode        = CreateToggleButton("Smooth Aim",   "🔄", false)
-local TeamCheckBtn, UpdateTeamCheck      = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
-local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad",   "🕹️", _G.MobilePadEnabled)
-local FOVBtn,       UpdateShowFOV        = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
-local EspBtn,       UpdateEsp            = CreateToggleButton("ESP",          "👁", false)
-local BrightBtn,    UpdateBright         = CreateToggleButton("FullBright",   "☀️", false)
-local NoclipBtn,    UpdateNoclip         = CreateToggleButton("Noclip",       "👻", false)
-local FlyBtn,       UpdateFly            = CreateToggleButton("Fly",          "🚀", false)
-local SpeedBtn,     UpdateSpeed          = CreateToggleButton("Speed",        "⚡", false)
-local InfJumpBtn,   UpdateInfJump        = CreateToggleButton("Inf Jump",     "🦘", false)
-local KillAuraBtn,  UpdateKillAura       = CreateToggleButton("Kill Aura",    "💀", false)
-local ReachBtn,     UpdateReach          = CreateToggleButton("Reach",        "🗡", false)
-local FreeCamBtn,   UpdateFreeCam        = CreateToggleButton("FreeCam",      "🎥", false)
-local SafeBtn,      UpdateSafe           = CreateToggleButton("Safe Mode",    "🛡",  true)
-
--- [[ ACTION BUTTONS ]] --
-local ActionSection = Instance.new("Frame")
-ActionSection.Name = "ActionSection"
-ActionSection.BackgroundTransparency = 1
-ActionSection.Size = UDim2.new(1, 0, 0, 45)
-ActionSection.Parent = Content
-
-local function CreateActionButton(name, color, width)
-    local Button = Instance.new("TextButton")
-    Button.Name = name
-    Button.BackgroundColor3 = color
-    Button.Size = UDim2.new(0, width, 0, 40)
-    Button.Font = Enum.Font.GothamBold
-    Button.Text = name
-    Button.TextColor3 = Theme.Text
-    Button.TextSize = 11
-    Button.AutoButtonColor = false
-    Button.Parent = ActionSection
-    ApplyCorner(Button, 8)
-
-    Button.MouseEnter:Connect(function()
-        CreateTween(Button, {BackgroundTransparency = 0.2}, 0.15):Play()
-    end)
-    Button.MouseLeave:Connect(function()
-        CreateTween(Button, {BackgroundTransparency = 0}, 0.15):Play()
-    end)
-
-    return Button
-end
-
-local ActionLayout = Instance.new("UIListLayout")
-ActionLayout.FillDirection = Enum.FillDirection.Horizontal
-ActionLayout.Padding = UDim.new(0, 10)
-ActionLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-ActionLayout.Parent = ActionSection
-
-local TpToolBtn       = CreateActionButton("🔧 TP Tool",  Color3.fromRGB(59, 130, 246), 100)
-local TpPlayerBtn     = CreateActionButton("🎯 Teleport", Color3.fromRGB(168, 85, 247), 100)
-local IgnorePlayerBtn = CreateActionButton("🚫 Ignore",   Color3.fromRGB(239, 68, 68), 100)
-
--- [[ PLAYER SELECTOR ]] --
-local PlayerSection = Instance.new("Frame")
-PlayerSection.Name = "PlayerSection"
-PlayerSection.BackgroundColor3 = Theme.Surface
-PlayerSection.Size = UDim2.new(1, 0, 0, 150)
-PlayerSection.Parent = Content
-ApplyCorner(PlayerSection, 10)
-ApplyStroke(PlayerSection, Theme.Border, 1)
-
-local PlayerHeader = Instance.new("Frame")
-PlayerHeader.Name = "Header"
-PlayerHeader.BackgroundColor3 = Theme.SurfaceHover
-PlayerHeader.Size = UDim2.new(1, 0, 0, 32)
-PlayerHeader.Parent = PlayerSection
-ApplyCorner(PlayerHeader, 10)
-
-local PlayerHeaderFix = Instance.new("Frame")
-PlayerHeaderFix.BackgroundColor3 = Theme.SurfaceHover
-PlayerHeaderFix.Position = UDim2.new(0, 0, 1, -10)
-PlayerHeaderFix.Size = UDim2.new(1, 0, 0, 10)
-PlayerHeaderFix.BorderSizePixel = 0
-PlayerHeaderFix.Parent = PlayerHeader
-
-local PlayerTitle = Instance.new("TextLabel")
-PlayerTitle.BackgroundTransparency = 1
-PlayerTitle.Position = UDim2.new(0, 12, 0, 0)
-PlayerTitle.Size = UDim2.new(1, -24, 1, 0)
-PlayerTitle.Font = Enum.Font.GothamBold
-PlayerTitle.Text = "👥 Players Online"
-PlayerTitle.TextColor3 = Theme.Text
-PlayerTitle.TextSize = 11
-PlayerTitle.TextXAlignment = Enum.TextXAlignment.Left
-PlayerTitle.Parent = PlayerHeader
-
-local PlayerCount = Instance.new("TextLabel")
-PlayerCount.Name = "Count"
-PlayerCount.BackgroundTransparency = 1
-PlayerCount.Position = UDim2.new(1, -40, 0, 0)
-PlayerCount.Size = UDim2.new(0, 30, 1, 0)
-PlayerCount.Font = Enum.Font.GothamBold
-PlayerCount.Text = "0"
-PlayerCount.TextColor3 = Theme.Accent
-PlayerCount.TextSize = 11
-PlayerCount.Parent = PlayerHeader
-
-local PlayerScroll = Instance.new("ScrollingFrame")
-PlayerScroll.Name = "Scroll"
-PlayerScroll.BackgroundTransparency = 1
-PlayerScroll.Position = UDim2.new(0, 8, 0, 38)
-PlayerScroll.Size = UDim2.new(1, -16, 1, -46)
-PlayerScroll.ScrollBarThickness = 2
-PlayerScroll.ScrollBarImageColor3 = Theme.Accent
-PlayerScroll.ScrollBarImageTransparency = 0.5
-PlayerScroll.Parent = PlayerSection
-
-local PlayerListLayout = Instance.new("UIListLayout")
-PlayerListLayout.Padding = UDim.new(0, 4)
-PlayerListLayout.Parent = PlayerScroll
-
--- Open Button (when minimized)
-local OpenBtn = Instance.new("TextButton")
-OpenBtn.Name = "OpenBtn"
-OpenBtn.BackgroundColor3 = Theme.Accent
-OpenBtn.Position = UDim2.new(0, 20, 0, 20)
-OpenBtn.Size = UDim2.new(0, 50, 0, 50)
-OpenBtn.Font = Enum.Font.GothamBlack
-OpenBtn.Text = "Z"
-OpenBtn.TextColor3 = Theme.Text
-OpenBtn.TextSize = 20
-OpenBtn.Visible = false
-OpenBtn.ZIndex = 100
-OpenBtn.Parent = ScreenGui
-ApplyCorner(OpenBtn, 25)
-ApplyStroke(OpenBtn, Theme.AccentGlow, 2)
-
--- Make OpenBtn draggable (variables forward-declared above)
-
-OpenBtn.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        openBtnDragging = true
-        openBtnDragStart = input.Position
-        openBtnStartPos = OpenBtn.Position
-
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                openBtnDragging = false
-            end
-        end)
-    end
-end)
-
-OpenBtn.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        openBtnDragInput = input
-    end
-end)
-
-
--- [[ DRAGGING ]] -- (variables forward-declared above)
-
-Header.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = Main.Position
-
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
-
-Header.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
-end)
-
-
--- [[ PLAYER LIST REFRESH ]] --
-local function RefreshPlayers()
-    for _, v in pairs(PlayerScroll:GetChildren()) do
-        if v:IsA("Frame") or v:IsA("TextButton") then v:Destroy() end
-    end
-
-    local count = 0
-    for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
-            count = count + 1
-
-            local isIgnored = _G.IgnoredPlayers[p.Name] == true
-            local isSelected = (_G.SelectedPlayer == p.Name)
-
-            local PlayerRow = Instance.new("Frame")
-            PlayerRow.Name = p.Name
-            PlayerRow.BackgroundTransparency = 1
-            PlayerRow.Size = UDim2.new(1, 0, 0, 28)
-            PlayerRow.Parent = PlayerScroll
-
-            local PlayerBtn = Instance.new("TextButton")
-            PlayerBtn.Name = "SelectBtn"
-            PlayerBtn.BackgroundColor3 = isSelected and Theme.Accent or Theme.SurfaceHover
-            PlayerBtn.Size = UDim2.new(1, -70, 1, 0)
-            PlayerBtn.Font = Enum.Font.GothamMedium
-            PlayerBtn.Text = "  " .. p.DisplayName
-            PlayerBtn.TextColor3 = isSelected and Theme.Text or Theme.TextMuted
-            PlayerBtn.TextSize = 11
-            PlayerBtn.TextXAlignment = Enum.TextXAlignment.Left
-            PlayerBtn.AutoButtonColor = false
-            PlayerBtn.Parent = PlayerRow
-            ApplyCorner(PlayerBtn, 6)
-
-            local IgnoreBtn = Instance.new("TextButton")
-            IgnoreBtn.Name = "IgnoreBtn"
-            IgnoreBtn.BackgroundColor3 = isIgnored and Theme.Danger or Theme.SurfaceHover
-            IgnoreBtn.Position = UDim2.new(1, -65, 0, 0)
-            IgnoreBtn.Size = UDim2.new(0, 65, 1, 0)
-            IgnoreBtn.Font = Enum.Font.GothamBold
-            IgnoreBtn.Text = isIgnored and "Ignored" or "Ignore"
-            IgnoreBtn.TextColor3 = isIgnored and Theme.Text or Theme.TextMuted
-            IgnoreBtn.TextSize = 10
-            IgnoreBtn.AutoButtonColor = false
-            IgnoreBtn.Parent = PlayerRow
-            ApplyCorner(IgnoreBtn, 6)
-
-            PlayerBtn.MouseEnter:Connect(function()
-                if _G.SelectedPlayer ~= p.Name then
-                    CreateTween(PlayerBtn, {BackgroundColor3 = Theme.Border}, 0.1):Play()
-                end
-            end)
-
-            PlayerBtn.MouseLeave:Connect(function()
-                if _G.SelectedPlayer ~= p.Name then
-                    CreateTween(PlayerBtn, {BackgroundColor3 = Theme.SurfaceHover}, 0.1):Play()
-                end
-            end)
-
-            PlayerBtn.MouseButton1Click:Connect(function()
-                _G.SelectedPlayer = p.Name
-                RefreshPlayers()
-            end)
-
-            IgnoreBtn.MouseButton1Click:Connect(function()
-                local newState = not (_G.IgnoredPlayers[p.Name] or false)
-                _G.IgnoredPlayers[p.Name] = newState
-                _G.IgnoredPlayers[p.DisplayName] = newState
-                _G.IgnoredPlayers[tostring(p.UserId)] = newState
-                RefreshPlayers()
-            end)
-        end
-    end
-
-    PlayerCount.Text = tostring(count)
-    PlayerScroll.CanvasSize = UDim2.new(0, 0, 0, count * 32)
-end
-
-RefreshPlayers()
-Players.PlayerAdded:Connect(RefreshPlayers)
-Players.PlayerRemoving:Connect(RefreshPlayers)
-
--- [[ SESSION TIMER ]] --
-task.spawn(function()
-    local startTime = tick()
-    while task.wait(1) do
-        local elapsed = tick() - startTime
-        local h = math.floor(elapsed / 3600)
-        local m = math.floor((elapsed % 3600) / 60)
-        local s = math.floor(elapsed % 60)
-        SessionLabel.Text = string.format("%02d:%02d:%02d", h, m, s)
-    end
-end)
-
--- [[ BUTTON LOGIC ]] --
-CloseBtn.MouseButton1Click:Connect(function()
-    if FOVCircle then pcall(function() FOVCircle:Remove() end) end
-    CreateTween(Main, {Size = UDim2.new(0, 360, 0, 0), BackgroundTransparency = 1}, 0.3):Play()
-    task.wait(0.3)
-    ScreenGui:Destroy()
-end)
-
--- Minimize Button Logic
-local isMinimized = false
-local savedMainPosition = nil
-
-MinimizeBtn.MouseButton1Click:Connect(function()
-    if isMinimized then return end
-    isMinimized = true
-    savedMainPosition = Main.Position
-
-    local tweenOut = CreateTween(Main, {
-        Size = UDim2.new(0, 360, 0, 50),
-        BackgroundTransparency = 0.5
-    }, 0.25)
-    tweenOut:Play()
-    tweenOut.Completed:Wait()
-
-    Main.Visible = false
-    OpenBtn.Visible = true
-
-    OpenBtn.Size = UDim2.new(0, 0, 0, 0)
-    OpenBtn.BackgroundTransparency = 1
-    local tweenIn = CreateTween(OpenBtn, {
-        Size = UDim2.new(0, 50, 0, 50),
-        BackgroundTransparency = 0
-    }, 0.2, Enum.EasingStyle.Back)
-    tweenIn:Play()
-end)
-
--- Open Button Logic
-OpenBtn.MouseButton1Click:Connect(function()
-    if not isMinimized then return end
-
-    local tweenOut = CreateTween(OpenBtn, {
-        Size = UDim2.new(0, 0, 0, 0),
-        BackgroundTransparency = 1
-    }, 0.15)
-    tweenOut:Play()
-    tweenOut.Completed:Wait()
-
-    OpenBtn.Visible = false
-    Main.Visible = true
-
-    Main.Size = UDim2.new(0, 360, 0, 50)
-    Main.BackgroundTransparency = 0.5
-    if savedMainPosition then
-        Main.Position = savedMainPosition
-    end
-
-    local tweenIn = CreateTween(Main, {
-        Size = UDim2.new(0, 360, 0, 480),
-        BackgroundTransparency = 0
-    }, 0.3, Enum.EasingStyle.Back)
-    tweenIn:Play()
-
-    isMinimized = false
-end)
-
--- Hover effects for OpenBtn
-OpenBtn.MouseEnter:Connect(function()
-    CreateTween(OpenBtn, {Size = UDim2.new(0, 55, 0, 55)}, 0.1):Play()
-end)
-
-OpenBtn.MouseLeave:Connect(function()
-    CreateTween(OpenBtn, {Size = UDim2.new(0, 50, 0, 50)}, 0.1):Play()
-end)
-
--- Input handlers
-SpeedInput.FocusLost:Connect(function()
-    local val = tonumber(SpeedInput.Text:match("%d+"))
-    if val then _G.MovementSpeed = val end
-    SpeedInput.Text = tostring(_G.MovementSpeed)
-end)
-
-TimeInput.FocusLost:Connect(function()
-    local val = tonumber(TimeInput.Text:match("%d+%.?%d*"))
-    if val then _G.TimeScale = val end
-    TimeInput.Text = tostring(_G.TimeScale) .. "x"
-end)
-
-ReachInput.FocusLost:Connect(function()
-    local val = tonumber(ReachInput.Text:match("%d+%.?%d*"))
-    if val then
-        _G.ReachDistance = math.clamp(val, 1, 100)
-    end
-    ReachInput.Text = tostring(_G.ReachDistance)
-end)
-
-KillAuraRangeInput.FocusLost:Connect(function()
-    local val = tonumber(KillAuraRangeInput.Text:match("%d+%.?%d*"))
-    if val then
-        _G.KillAuraRange = math.clamp(val, 1, 200)
-    end
-    KillAuraRangeInput.Text = tostring(_G.KillAuraRange)
-end)
-
-ESPRangeInput.FocusLost:Connect(function()
-    local val = tonumber(ESPRangeInput.Text:match("%d+%.?%d*"))
-    if val then
-        _G.ESPRange = math.clamp(val, 10, 100000)
-    end
-    ESPRangeInput.Text = tostring(_G.ESPRange)
-end)
-
-AimFOVInput.FocusLost:Connect(function()
-    local val = tonumber(AimFOVInput.Text:match("%d+"))
-    if val then
-        _G.AimFOV = math.clamp(val, minFOV, maxFOV)
-        local pct = math.clamp((_G.AimFOV - minFOV) / (maxFOV - minFOV), 0, 1)
-        AimFOVFill.Size = UDim2.new(pct, 0, 1, 0)
-        AimFOVKnob.Position = UDim2.new(pct, 0, 0.5, 0)
-        SaveConfig()
-    end
-    AimFOVInput.Text = tostring(_G.AimFOV) .. " px"
-end)
+-- [[ PLAYER LIST UI REGISTRY ]] --
+local PlayerListUI = {}
 
 -- [[ CORE FUNCTIONS ]] --
 local function RestoreLighting()
@@ -1733,73 +797,87 @@ local function RunKillAura()
 end
 
 -- [[ AUTO AIM & FOV CIRCLE SYSTEM ]] --
-if _G.ZHubFOVCircle then
-    pcall(function() _G.ZHubFOVCircle:Remove() end)
-    pcall(function() _G.ZHubFOVCircle:Destroy() end)
-    _G.ZHubFOVCircle = nil
-end
-
--- Purge any orphaned FOVCircleGui frames safely
-if parentContainer then
-    for _, child in pairs(parentContainer:GetChildren()) do
-        if child.Name == "FOVCircleGui" or child.Name == "ZHubFOVCircle" then
-            pcall(function() child:Destroy() end)
-        end
+local _updateAutoAimFunc = nil
+local function ToggleAutoAim(forcedState)
+    if forcedState ~= nil then
+        _G.AutoAim = forcedState
+    else
+        _G.AutoAim = not _G.AutoAim
     end
-end
-
-local FOVCircle = nil
-pcall(function()
-    if Drawing and typeof(Drawing.new) == "function" then
-        FOVCircle = Drawing.new("Circle")
-        FOVCircle.Thickness = 1.5
-        FOVCircle.Color = Theme.Accent
-        FOVCircle.Filled = false
-        FOVCircle.Transparency = 0.7
-        FOVCircle.Radius = _G.AimFOV
-        FOVCircle.Visible = false
-        _G.ZHubFOVCircle = FOVCircle
+    if _updateAutoAimFunc then
+        _updateAutoAimFunc(_G.AutoAim)
     end
-end)
-
-local GuiFOVCircle = nil
-if not FOVCircle then
-    GuiFOVCircle = Instance.new("Frame")
-    GuiFOVCircle.Name = "FOVCircleGui"
-    GuiFOVCircle.BackgroundTransparency = 1
-    GuiFOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
-    GuiFOVCircle.Visible = false
-    GuiFOVCircle.Parent = ScreenGui
-    ApplyCorner(GuiFOVCircle, 999)
-    ApplyStroke(GuiFOVCircle, Theme.Accent, 1.5, 0.3)
+    SaveConfig()
 end
 
 local function GetCrosshairPosition()
     return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 end
 
-local function UpdateFOVCircle()
-    local shouldShow = _G.ShowFOV and (_G.AutoAim or _G.AutoShoot or _G.ShowFOV)
-
-    if FOVCircle then
-        FOVCircle.Visible = shouldShow
-    elseif GuiFOVCircle then
-        GuiFOVCircle.Visible = shouldShow
+local UpdateFOVCircle
+do
+    if _G.ZHubFOVCircle then
+        pcall(function() _G.ZHubFOVCircle:Remove() end)
+        pcall(function() _G.ZHubFOVCircle:Destroy() end)
+        _G.ZHubFOVCircle = nil
     end
 
-    if not shouldShow then return end
+    if parentContainer then
+        for _, child in pairs(parentContainer:GetChildren()) do
+            if child.Name == "FOVCircleGui" or child.Name == "ZHubFOVCircle" then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
 
-    -- Dot mode: small 5px circle when Auto Aim is disabled & Auto Shoot is enabled
-    local isDotMode = (not _G.AutoAim) and _G.AutoShoot
-    local fovRadius = isDotMode and 5 or _G.AimFOV
+    local FOVCircle = nil
+    pcall(function()
+        if Drawing and typeof(Drawing.new) == "function" then
+            FOVCircle = Drawing.new("Circle")
+            FOVCircle.Thickness = 1.5
+            FOVCircle.Color = Theme.Accent
+            FOVCircle.Filled = false
+            FOVCircle.Transparency = 0.7
+            FOVCircle.Radius = _G.AimFOV
+            FOVCircle.Visible = false
+            _G.ZHubFOVCircle = FOVCircle
+        end
+    end)
 
-    local crosshairPos = GetCrosshairPosition()
-    if FOVCircle then
-        FOVCircle.Radius = fovRadius
-        FOVCircle.Position = crosshairPos
-    elseif GuiFOVCircle then
-        GuiFOVCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
-        GuiFOVCircle.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
+    local GuiFOVCircle = nil
+    if not FOVCircle then
+        GuiFOVCircle = Instance.new("Frame")
+        GuiFOVCircle.Name = "FOVCircleGui"
+        GuiFOVCircle.BackgroundTransparency = 1
+        GuiFOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+        GuiFOVCircle.Visible = false
+        GuiFOVCircle.Parent = ScreenGui
+        ApplyCorner(GuiFOVCircle, 999)
+        ApplyStroke(GuiFOVCircle, Theme.Accent, 1.5, 0.3)
+    end
+
+    function UpdateFOVCircle()
+        local shouldShow = _G.ShowFOV and (_G.AutoAim or _G.AutoShoot or _G.ShowFOV)
+
+        if FOVCircle then
+            FOVCircle.Visible = shouldShow
+        elseif GuiFOVCircle then
+            GuiFOVCircle.Visible = shouldShow
+        end
+
+        if not shouldShow then return end
+
+        local isDotMode = (not _G.AutoAim) and _G.AutoShoot
+        local fovRadius = isDotMode and 5 or _G.AimFOV
+
+        local crosshairPos = GetCrosshairPosition()
+        if FOVCircle then
+            FOVCircle.Radius = fovRadius
+            FOVCircle.Position = crosshairPos
+        elseif GuiFOVCircle then
+            GuiFOVCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
+            GuiFOVCircle.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
+        end
     end
 end
 
@@ -2068,23 +1146,6 @@ local function RunAutoShoot()
     end)
 end
 
--- Toggle button connections
-NoclipBtn.MouseButton1Click:Connect(function()
-    _G.Noclip = not _G.Noclip
-    UpdateNoclip(_G.Noclip)
-end)
-
-FlyBtn.MouseButton1Click:Connect(function()
-    _G.Fly = not _G.Fly
-    UpdateFly(_G.Fly)
-    if not _G.Fly then StopFly() end
-end)
-
-SpeedBtn.MouseButton1Click:Connect(function()
-    _G.SpeedEnabled = not _G.SpeedEnabled
-    UpdateSpeed(_G.SpeedEnabled)
-end)
-
 -- [[ ZERO-ALLOCATION ESP SYSTEM ]] --
 local function GetOrCreateESP(player)
     if player == LocalPlayer then return nil, nil end
@@ -2234,191 +1295,1051 @@ for _, p in pairs(Players:GetPlayers()) do
 end
 Players.PlayerAdded:Connect(HookPlayerESP)
 
-EspBtn.MouseButton1Click:Connect(function()
-    _G.EspEnabled = not _G.EspEnabled
-    UpdateEsp(_G.EspEnabled)
-    RefreshAllESP()
+do
+-- [[ INPUT SECTION ]] --
+local InputSection = Instance.new("Frame")
+InputSection.Name = "InputSection"
+InputSection.BackgroundTransparency = 1
+InputSection.Size = UDim2.new(1, 0, 0, 45)
+InputSection.Parent = Content
+
+local InputLayout = Instance.new("UIListLayout")
+InputLayout.FillDirection = Enum.FillDirection.Horizontal
+InputLayout.Padding = UDim.new(0, 10)
+InputLayout.Parent = InputSection
+
+local function CreateInputBox(name, placeholder, width, parentFrame)
+    local Container = Instance.new("Frame")
+    Container.Name = name
+    Container.BackgroundColor3 = Theme.Surface
+    Container.Size = UDim2.new(0, width, 0, 40)
+    Container.Parent = parentFrame or InputSection
+    ApplyCorner(Container, 8)
+    ApplyStroke(Container, Theme.Border, 1) 
+
+    local Icon = Instance.new("TextLabel")
+    Icon.BackgroundTransparency = 1
+    Icon.Position = UDim2.new(0, 12, 0, 0)
+    Icon.Size = UDim2.new(0, 20, 1, 0)
+    Icon.Font = Enum.Font.GothamBold
+    Icon.Text = name == "Speed" and "⚡" or (name == "KillAuraRange" and "💀" or (name == "AimFOV" and "🎯" or "⏱"))
+    Icon.TextColor3 = Theme.Accent
+    Icon.TextSize = 14
+    Icon.Parent = Container
+
+    local Input = Instance.new("TextBox")
+    Input.Name = "Input"
+    Input.BackgroundTransparency = 1
+    Input.Position = UDim2.new(0, 35, 0, 0)
+    Input.Size = UDim2.new(1, -45, 1, 0)
+    Input.Font = Enum.Font.GothamMedium
+    Input.PlaceholderText = placeholder
+    Input.Text = ""
+    Input.TextColor3 = Theme.Text
+    Input.PlaceholderColor3 = Theme.TextMuted
+    Input.TextSize = 12
+    Input.TextXAlignment = Enum.TextXAlignment.Left
+    Input.ClearTextOnFocus = false
+    Input.Parent = Container
+
+    return Input, Container
+end
+
+local SpeedInput, SpeedContainer = CreateInputBox("Speed", "Speed: 50", 155, InputSection)
+local TimeInput, TimeContainer = CreateInputBox("Time", "Time: 1x", 155, InputSection)
+
+SpeedInput.Text = "50"
+TimeInput.Text = "1x"
+
+SpeedInput.FocusLost:Connect(function()
+    local val = tonumber(SpeedInput.Text:match("%d+"))
+    if val then _G.MovementSpeed = val; SaveConfig() end
+    SpeedInput.Text = tostring(_G.MovementSpeed)
 end)
 
-FreeCamBtn.MouseButton1Click:Connect(function()
-    _G.FreeCam = not _G.FreeCam
-    UpdateFreeCam(_G.FreeCam)
-    ToggleFreeCam()
+TimeInput.FocusLost:Connect(function()
+    local val = tonumber(TimeInput.Text:match("%d+%.?%d*"))
+    if val then _G.TimeScale = val; SaveConfig() end
+    TimeInput.Text = tostring(_G.TimeScale) .. "x"
 end)
 
-InfJumpBtn.MouseButton1Click:Connect(function()
-    _G.InfJump = not _G.InfJump
-    UpdateInfJump(_G.InfJump)
-end)
+-- [[ REACH INPUT SECTION ]] --
+do
+local ReachInputSection = Instance.new("Frame")
+ReachInputSection.Name = "ReachInputSection"
+ReachInputSection.BackgroundTransparency = 1
+ReachInputSection.Size = UDim2.new(1, 0, 0, 45)
+ReachInputSection.Parent = Content
 
-BrightBtn.MouseButton1Click:Connect(function()
-    _G.FullBright = not _G.FullBright
-    UpdateBright(_G.FullBright)
-    if not _G.FullBright then RestoreLighting() end
-end)
+local ReachInputLayout = Instance.new("UIListLayout")
+ReachInputLayout.FillDirection = Enum.FillDirection.Horizontal
+ReachInputLayout.Padding = UDim.new(0, 10)
+ReachInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ReachInputLayout.Parent = ReachInputSection
 
-SafeBtn.MouseButton1Click:Connect(function()
-    _G.SafeMode = not _G.SafeMode
-    UpdateSafe(_G.SafeMode)
-end)
+local ReachContainer = Instance.new("Frame")
+ReachContainer.Name = "Reach"
+ReachContainer.BackgroundColor3 = Theme.Surface
+ReachContainer.Size = UDim2.new(0, 320, 0, 40)
+ReachContainer.Parent = ReachInputSection
+ApplyCorner(ReachContainer, 8)
+ApplyStroke(ReachContainer, Theme.Border, 1)
 
-ReachBtn.MouseButton1Click:Connect(function()
-    _G.ReachEnabled = not _G.ReachEnabled
-    UpdateReach(_G.ReachEnabled)
-    if _G.ReachEnabled then
-        CreateReachPart()
-    else
-        DestroyReachPart()
-        RestoreToolHitbox()
-    end
-end)
+local ReachIcon = Instance.new("TextLabel")
+ReachIcon.BackgroundTransparency = 1
+ReachIcon.Position = UDim2.new(0, 12, 0, 0)
+ReachIcon.Size = UDim2.new(0, 20, 1, 0)
+ReachIcon.Font = Enum.Font.GothamBold
+ReachIcon.Text = "🗡"
+ReachIcon.TextColor3 = Theme.Accent
+ReachIcon.TextSize = 14
+ReachIcon.Parent = ReachContainer
 
-KillAuraBtn.MouseButton1Click:Connect(function()
-    _G.KillAura = not _G.KillAura
-    UpdateKillAura(_G.KillAura)
-    -- Clear stale hit cache when toggling off
-    if not _G.KillAura then
-        KillAuraLastHit = {}
-    end
-end)
+local ReachLabel = Instance.new("TextLabel")
+ReachLabel.BackgroundTransparency = 1
+ReachLabel.Position = UDim2.new(0, 35, 0, 0)
+ReachLabel.Size = UDim2.new(0, 80, 1, 0)
+ReachLabel.Font = Enum.Font.GothamMedium
+ReachLabel.Text = "Reach:"
+ReachLabel.TextColor3 = Theme.TextMuted
+ReachLabel.TextSize = 12
+ReachLabel.TextXAlignment = Enum.TextXAlignment.Left
+ReachLabel.Parent = ReachContainer
 
-local function ToggleAutoAim(forcedState)
-    if forcedState ~= nil then
-        _G.AutoAim = forcedState
-    else
-        _G.AutoAim = not _G.AutoAim
-    end
-    UpdateAutoAim(_G.AutoAim)
+local ReachInput = Instance.new("TextBox")
+ReachInput.Name = "Input"
+ReachInput.BackgroundTransparency = 1
+ReachInput.Position = UDim2.new(0, 115, 0, 0)
+ReachInput.Size = UDim2.new(0, 60, 1, 0)
+ReachInput.Font = Enum.Font.GothamMedium
+ReachInput.PlaceholderText = "15"
+ReachInput.Text = "15"
+ReachInput.TextColor3 = Theme.Text
+ReachInput.PlaceholderColor3 = Theme.TextMuted
+ReachInput.TextSize = 12
+ReachInput.TextXAlignment = Enum.TextXAlignment.Left
+ReachInput.ClearTextOnFocus = false
+ReachInput.Parent = ReachContainer
+
+    ReachInput.FocusLost:Connect(function()
+        local val = tonumber(ReachInput.Text)
+        if val then
+            _G.ReachDistance = val
+            UpdateReachSize()
+            SaveConfig()
+        end
+    end)
+
+local ReachUnit = Instance.new("TextLabel")
+ReachUnit.BackgroundTransparency = 1
+ReachUnit.Position = UDim2.new(0, 175, 0, 0)
+ReachUnit.Size = UDim2.new(0, 60, 1, 0)
+ReachUnit.Font = Enum.Font.GothamMedium
+ReachUnit.Text = "studs"
+ReachUnit.TextColor3 = Theme.TextMuted
+ReachUnit.TextSize = 11
+ReachUnit.TextXAlignment = Enum.TextXAlignment.Left
+ReachUnit.Parent = ReachContainer
+
+-- [[ KILL AURA RANGE INPUT SECTION ]] --
+local KillAuraInputSection = Instance.new("Frame")
+KillAuraInputSection.Name = "KillAuraInputSection"
+KillAuraInputSection.BackgroundTransparency = 1
+KillAuraInputSection.Size = UDim2.new(1, 0, 0, 45)
+KillAuraInputSection.Parent = Content
+
+local KillAuraInputLayout = Instance.new("UIListLayout")
+KillAuraInputLayout.FillDirection = Enum.FillDirection.Horizontal
+KillAuraInputLayout.Padding = UDim.new(0, 10)
+KillAuraInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+KillAuraInputLayout.Parent = KillAuraInputSection
+
+local KillAuraContainer = Instance.new("Frame")
+KillAuraContainer.Name = "KillAuraRange"
+KillAuraContainer.BackgroundColor3 = Theme.Surface
+KillAuraContainer.Size = UDim2.new(0, 320, 0, 40)
+KillAuraContainer.Parent = KillAuraInputSection
+ApplyCorner(KillAuraContainer, 8)
+ApplyStroke(KillAuraContainer, Theme.Border, 1)
+
+local KillAuraIcon = Instance.new("TextLabel")
+KillAuraIcon.BackgroundTransparency = 1
+KillAuraIcon.Position = UDim2.new(0, 12, 0, 0)
+KillAuraIcon.Size = UDim2.new(0, 20, 1, 0)
+KillAuraIcon.Font = Enum.Font.GothamBold
+KillAuraIcon.Text = "💀"
+KillAuraIcon.TextColor3 = Theme.Accent
+KillAuraIcon.TextSize = 14
+KillAuraIcon.Parent = KillAuraContainer
+
+local KillAuraRangeLabel = Instance.new("TextLabel")
+KillAuraRangeLabel.BackgroundTransparency = 1
+KillAuraRangeLabel.Position = UDim2.new(0, 35, 0, 0)
+KillAuraRangeLabel.Size = UDim2.new(0, 80, 1, 0)
+KillAuraRangeLabel.Font = Enum.Font.GothamMedium
+KillAuraRangeLabel.Text = "Aura Range:"
+KillAuraRangeLabel.TextColor3 = Theme.TextMuted
+KillAuraRangeLabel.TextSize = 12
+KillAuraRangeLabel.TextXAlignment = Enum.TextXAlignment.Left
+KillAuraRangeLabel.Parent = KillAuraContainer
+
+local KillAuraRangeInput = Instance.new("TextBox")
+KillAuraRangeInput.Name = "Input"
+KillAuraRangeInput.BackgroundTransparency = 1
+KillAuraRangeInput.Position = UDim2.new(0, 115, 0, 0)
+KillAuraRangeInput.Size = UDim2.new(0, 60, 1, 0)
+KillAuraRangeInput.Font = Enum.Font.GothamMedium
+KillAuraRangeInput.PlaceholderText = "20"
+KillAuraRangeInput.Text = "20"
+KillAuraRangeInput.TextColor3 = Theme.Text
+KillAuraRangeInput.PlaceholderColor3 = Theme.TextMuted
+KillAuraRangeInput.TextSize = 12
+KillAuraRangeInput.TextXAlignment = Enum.TextXAlignment.Left
+KillAuraRangeInput.ClearTextOnFocus = false
+KillAuraRangeInput.Parent = KillAuraContainer
+
+    KillAuraRangeInput.FocusLost:Connect(function()
+        local val = tonumber(KillAuraRangeInput.Text)
+        if val then
+            _G.KillAuraRange = val
+            SaveConfig()
+        end
+    end)
+
+local KillAuraRangeUnit = Instance.new("TextLabel")
+KillAuraRangeUnit.BackgroundTransparency = 1
+KillAuraRangeUnit.Position = UDim2.new(0, 175, 0, 0)
+KillAuraRangeUnit.Size = UDim2.new(0, 60, 1, 0)
+KillAuraRangeUnit.Font = Enum.Font.GothamMedium
+KillAuraRangeUnit.Text = "studs"
+KillAuraRangeUnit.TextColor3 = Theme.TextMuted
+KillAuraRangeUnit.TextSize = 11
+KillAuraRangeUnit.TextXAlignment = Enum.TextXAlignment.Left
+KillAuraRangeUnit.Parent = KillAuraContainer
+
+-- [[ ESP RANGE INPUT SECTION ]] --
+local ESPRangeInputSection = Instance.new("Frame")
+ESPRangeInputSection.Name = "ESPRangeInputSection"
+ESPRangeInputSection.BackgroundTransparency = 1
+ESPRangeInputSection.Size = UDim2.new(1, 0, 0, 45)
+ESPRangeInputSection.Parent = Content
+
+local ESPRangeInputLayout = Instance.new("UIListLayout")
+ESPRangeInputLayout.FillDirection = Enum.FillDirection.Horizontal
+ESPRangeInputLayout.Padding = UDim.new(0, 10)
+ESPRangeInputLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ESPRangeInputLayout.Parent = ESPRangeInputSection
+
+local ESPRangeContainer = Instance.new("Frame")
+ESPRangeContainer.Name = "ESPRange"
+ESPRangeContainer.BackgroundColor3 = Theme.Surface
+ESPRangeContainer.Size = UDim2.new(0, 320, 0, 40)
+ESPRangeContainer.Parent = ESPRangeInputSection
+ApplyCorner(ESPRangeContainer, 8)
+ApplyStroke(ESPRangeContainer, Theme.Border, 1)
+
+local ESPRangeIcon = Instance.new("TextLabel")
+ESPRangeIcon.BackgroundTransparency = 1
+ESPRangeIcon.Position = UDim2.new(0, 12, 0, 0)
+ESPRangeIcon.Size = UDim2.new(0, 20, 1, 0)
+ESPRangeIcon.Font = Enum.Font.GothamBold
+ESPRangeIcon.Text = "👁"
+ESPRangeIcon.TextColor3 = Theme.Accent
+ESPRangeIcon.TextSize = 14
+ESPRangeIcon.Parent = ESPRangeContainer
+
+local ESPRangeLabel = Instance.new("TextLabel")
+ESPRangeLabel.BackgroundTransparency = 1
+ESPRangeLabel.Position = UDim2.new(0, 35, 0, 0)
+ESPRangeLabel.Size = UDim2.new(0, 90, 1, 0)
+ESPRangeLabel.Font = Enum.Font.GothamMedium
+ESPRangeLabel.Text = "ESP Range:"
+ESPRangeLabel.TextColor3 = Theme.TextMuted
+ESPRangeLabel.TextSize = 12
+ESPRangeLabel.TextXAlignment = Enum.TextXAlignment.Left
+ESPRangeLabel.Parent = ESPRangeContainer
+
+local ESPRangeInput = Instance.new("TextBox")
+ESPRangeInput.Name = "Input"
+ESPRangeInput.BackgroundTransparency = 1
+ESPRangeInput.Position = UDim2.new(0, 125, 0, 0)
+ESPRangeInput.Size = UDim2.new(0, 60, 1, 0)
+ESPRangeInput.Font = Enum.Font.GothamMedium
+ESPRangeInput.PlaceholderText = "1000"
+ESPRangeInput.Text = "1000"
+ESPRangeInput.TextColor3 = Theme.Text
+ESPRangeInput.PlaceholderColor3 = Theme.TextMuted
+ESPRangeInput.TextSize = 12
+ESPRangeInput.TextXAlignment = Enum.TextXAlignment.Left
+ESPRangeInput.ClearTextOnFocus = false
+ESPRangeInput.Parent = ESPRangeContainer
+
+    ESPRangeInput.FocusLost:Connect(function()
+        local val = tonumber(ESPRangeInput.Text)
+        if val then
+            _G.ESPRange = val
+            SaveConfig()
+        end
+    end)
+end
+
+local ESPRangeUnit = Instance.new("TextLabel")
+ESPRangeUnit.BackgroundTransparency = 1
+ESPRangeUnit.Position = UDim2.new(0, 185, 0, 0)
+ESPRangeUnit.Size = UDim2.new(0, 60, 1, 0)
+ESPRangeUnit.Font = Enum.Font.GothamMedium
+ESPRangeUnit.Text = "studs"
+ESPRangeUnit.TextColor3 = Theme.TextMuted
+ESPRangeUnit.TextSize = 11
+ESPRangeUnit.TextXAlignment = Enum.TextXAlignment.Left
+ESPRangeUnit.Parent = ESPRangeContainer
+
+-- [[ AIM FOV SLIDER SECTION ]] --
+do
+local AimFOVSliderFrame = Instance.new("Frame")
+AimFOVSliderFrame.Name = "AimFOVSliderFrame"
+AimFOVSliderFrame.BackgroundColor3 = Theme.Surface
+AimFOVSliderFrame.Size = UDim2.new(0, 320, 0, 50)
+AimFOVSliderFrame.Parent = Content
+ApplyCorner(AimFOVSliderFrame, 8)
+ApplyStroke(AimFOVSliderFrame, Theme.Border, 1)
+
+local AimFOVIcon = Instance.new("TextLabel")
+AimFOVIcon.BackgroundTransparency = 1
+AimFOVIcon.Position = UDim2.new(0, 12, 0, 6)
+AimFOVIcon.Size = UDim2.new(0, 20, 0, 20)
+AimFOVIcon.Font = Enum.Font.GothamBold
+AimFOVIcon.Text = "🎯"
+AimFOVIcon.TextColor3 = Theme.Accent
+AimFOVIcon.TextSize = 14
+AimFOVIcon.Parent = AimFOVSliderFrame
+
+local AimFOVTitle = Instance.new("TextLabel")
+AimFOVTitle.BackgroundTransparency = 1
+AimFOVTitle.Position = UDim2.new(0, 35, 0, 6)
+AimFOVTitle.Size = UDim2.new(0, 120, 0, 20)
+AimFOVTitle.Font = Enum.Font.GothamMedium
+AimFOVTitle.Text = "Aim FOV Slider"
+AimFOVTitle.TextColor3 = Theme.TextMuted
+AimFOVTitle.TextSize = 12
+AimFOVTitle.TextXAlignment = Enum.TextXAlignment.Left
+AimFOVTitle.Parent = AimFOVSliderFrame
+
+local AimFOVInput = Instance.new("TextBox")
+AimFOVInput.Name = "Input"
+AimFOVInput.BackgroundTransparency = 1
+AimFOVInput.Position = UDim2.new(1, -75, 0, 6)
+AimFOVInput.Size = UDim2.new(0, 60, 0, 20)
+AimFOVInput.Font = Enum.Font.GothamBold
+AimFOVInput.Text = tostring(_G.AimFOV) .. " px"
+AimFOVInput.TextColor3 = Theme.Accent
+AimFOVInput.TextSize = 12
+AimFOVInput.TextXAlignment = Enum.TextXAlignment.Right
+AimFOVInput.ClearTextOnFocus = false
+AimFOVInput.Parent = AimFOVSliderFrame
+
+    AimFOVInput.FocusLost:Connect(function()
+        local val = tonumber(AimFOVInput.Text:lower():gsub("px", ""):strip() or AimFOVInput.Text)
+        if val then
+            _G.AimFOV = math.clamp(val, 10, 600)
+            AimFOVInput.Text = tostring(_G.AimFOV) .. " px"
+            SaveConfig()
+        end
+    end)
+
+-- Track Line
+local AimFOVTrack = Instance.new("Frame")
+AimFOVTrack.Name = "Track"
+AimFOVTrack.BackgroundColor3 = Theme.SurfaceHover
+AimFOVTrack.Position = UDim2.new(0, 12, 0, 32)
+AimFOVTrack.Size = UDim2.new(1, -24, 0, 6)
+AimFOVTrack.Parent = AimFOVSliderFrame
+ApplyCorner(AimFOVTrack, 3)
+
+-- Fill Bar
+local AimFOVFill = Instance.new("Frame")
+AimFOVFill.Name = "Fill"
+AimFOVFill.BackgroundColor3 = Theme.Accent
+local minFOV, maxFOV = 10, 600
+local initialPct = math.clamp((_G.AimFOV - minFOV) / (maxFOV - minFOV), 0, 1)
+AimFOVFill.Size = UDim2.new(initialPct, 0, 1, 0)
+AimFOVFill.Parent = AimFOVTrack
+ApplyCorner(AimFOVFill, 3)
+
+-- Knob / Handle
+local AimFOVKnob = Instance.new("Frame")
+AimFOVKnob.Name = "Knob"
+AimFOVKnob.BackgroundColor3 = Theme.Text
+AimFOVKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+AimFOVKnob.Position = UDim2.new(initialPct, 0, 0.5, 0)
+AimFOVKnob.Size = UDim2.new(0, 14, 0, 14)
+AimFOVKnob.Parent = AimFOVTrack
+ApplyCorner(AimFOVKnob, 7)
+ApplyStroke(AimFOVKnob, Theme.Accent, 2)
+
+local fovDragging = false
+
+local function UpdateFOVSlider(input)
+    local trackPos = AimFOVTrack.AbsolutePosition.X
+    local trackWidth = AimFOVTrack.AbsoluteSize.X
+    local mouseX = input.Position.X
+    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
+
+    local val = math.floor(minFOV + (maxFOV - minFOV) * pct)
+    _G.AimFOV = val
+    AimFOVFill.Size = UDim2.new(pct, 0, 1, 0)
+    AimFOVKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+    AimFOVInput.Text = tostring(val) .. " px"
     SaveConfig()
 end
 
-AutoAimBtn.MouseButton1Click:Connect(function()
-    ToggleAutoAim()
-end)
-
-FOVBtn.MouseButton1Click:Connect(function()
-    _G.ShowFOV = not _G.ShowFOV
-    UpdateShowFOV(_G.ShowFOV)
-    SaveConfig()
-end)
-
-AimModeBtn.MouseButton1Click:Connect(function()
-    _G.SmoothAim = not _G.SmoothAim
-    UpdateAimMode(_G.SmoothAim)
-end)
-
-TeamCheckBtn.MouseButton1Click:Connect(function()
-    _G.TeamCheck = not _G.TeamCheck
-    UpdateTeamCheck(_G.TeamCheck)
-    SaveConfig()
-end)
-
-AutoShootBtn.MouseButton1Click:Connect(function()
-    _G.AutoShoot = not _G.AutoShoot
-    UpdateAutoShoot(_G.AutoShoot)
-    SaveConfig()
-end)
-
-MobilePadBtn.MouseButton1Click:Connect(function()
-    _G.MobilePadEnabled = not _G.MobilePadEnabled
-    UpdateMobilePadToggle(_G.MobilePadEnabled)
-    if MobilePadFrame then
-        MobilePadFrame.Visible = _G.MobilePadEnabled
+AimFOVTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        fovDragging = true
+        UpdateFOVSlider(input)
     end
-    if not _G.MobilePadEnabled then
-        ResetMobilePad()
-    end
-    SaveConfig()
 end)
 
--- TP Tool
-local tpClaimed = false
-TpToolBtn.MouseButton1Click:Connect(function()
-    if tpClaimed then return end
-    tpClaimed = true
-    TpToolBtn.Text = "✓ Claimed"
-    TpToolBtn.BackgroundColor3 = Theme.Success
 
-    local tool = Instance.new("Tool")
-    tool.Name = "TP Tool"
-    tool.RequiresHandle = false
-    tool.Parent = LocalPlayer.Backpack
+-- [[ HEADSHOT RATE SLIDER SECTION ]] --
+local HeadshotSliderFrame = Instance.new("Frame")
+HeadshotSliderFrame.Name = "HeadshotSliderFrame"
+HeadshotSliderFrame.BackgroundColor3 = Theme.Surface
+HeadshotSliderFrame.Size = UDim2.new(0, 320, 0, 50)
+HeadshotSliderFrame.Parent = Content
+ApplyCorner(HeadshotSliderFrame, 8)
+ApplyStroke(HeadshotSliderFrame, Theme.Border, 1)
 
-    tool.Activated:Connect(function()
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChild("HumanoidRootPart") then
-            local dist = (char.HumanoidRootPart.Position - Mouse.Hit.p).Magnitude
-            local speed = _G.SafeMode and 100 or 500
-            TweenService:Create(
-                char.HumanoidRootPart,
-                TweenInfo.new(dist / speed, Enum.EasingStyle.Linear),
-                {CFrame = CFrame.new(Mouse.Hit.p + Vector3.new(0, 3, 0))}
-            ):Play()
+local HeadshotIcon = Instance.new("TextLabel")
+HeadshotIcon.BackgroundTransparency = 1
+HeadshotIcon.Position = UDim2.new(0, 12, 0, 6)
+HeadshotIcon.Size = UDim2.new(0, 20, 0, 20)
+HeadshotIcon.Font = Enum.Font.GothamBold
+HeadshotIcon.Text = "💀"
+HeadshotIcon.TextColor3 = Theme.Danger
+HeadshotIcon.TextSize = 14
+HeadshotIcon.Parent = HeadshotSliderFrame
+
+local HeadshotTitle = Instance.new("TextLabel")
+HeadshotTitle.BackgroundTransparency = 1
+HeadshotTitle.Position = UDim2.new(0, 35, 0, 6)
+HeadshotTitle.Size = UDim2.new(0, 130, 0, 20)
+HeadshotTitle.Font = Enum.Font.GothamMedium
+HeadshotTitle.Text = "Headshot Rate"
+HeadshotTitle.TextColor3 = Theme.TextMuted
+HeadshotTitle.TextSize = 12
+HeadshotTitle.TextXAlignment = Enum.TextXAlignment.Left
+HeadshotTitle.Parent = HeadshotSliderFrame
+
+local HeadshotValueLabel = Instance.new("TextLabel")
+HeadshotValueLabel.Name = "Value"
+HeadshotValueLabel.BackgroundTransparency = 1
+HeadshotValueLabel.Position = UDim2.new(1, -75, 0, 6)
+HeadshotValueLabel.Size = UDim2.new(0, 60, 0, 20)
+HeadshotValueLabel.Font = Enum.Font.GothamBold
+HeadshotValueLabel.Text = tostring(math.floor(_G.HeadshotChance * 100)) .. "%"
+HeadshotValueLabel.TextColor3 = Theme.Danger
+HeadshotValueLabel.TextSize = 12
+HeadshotValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+HeadshotValueLabel.Parent = HeadshotSliderFrame
+
+local HeadshotTrack = Instance.new("Frame")
+HeadshotTrack.Name = "Track"
+HeadshotTrack.BackgroundColor3 = Theme.SurfaceHover
+HeadshotTrack.Position = UDim2.new(0, 12, 0, 32)
+HeadshotTrack.Size = UDim2.new(1, -24, 0, 6)
+HeadshotTrack.Parent = HeadshotSliderFrame
+ApplyCorner(HeadshotTrack, 3)
+
+local HeadshotFill = Instance.new("Frame")
+HeadshotFill.Name = "Fill"
+HeadshotFill.BackgroundColor3 = Theme.Danger
+local hsInitialPct = math.clamp(_G.HeadshotChance, 0, 1)
+HeadshotFill.Size = UDim2.new(hsInitialPct, 0, 1, 0)
+HeadshotFill.Parent = HeadshotTrack
+ApplyCorner(HeadshotFill, 3)
+
+local HeadshotKnob = Instance.new("Frame")
+HeadshotKnob.Name = "Knob"
+HeadshotKnob.BackgroundColor3 = Theme.Text
+HeadshotKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+HeadshotKnob.Position = UDim2.new(hsInitialPct, 0, 0.5, 0)
+HeadshotKnob.Size = UDim2.new(0, 14, 0, 14)
+HeadshotKnob.Parent = HeadshotTrack
+ApplyCorner(HeadshotKnob, 7)
+ApplyStroke(HeadshotKnob, Theme.Danger, 2)
+
+local headshotDragging = false
+
+local function UpdateHeadshotSlider(input)
+    local trackPos = HeadshotTrack.AbsolutePosition.X
+    local trackWidth = HeadshotTrack.AbsoluteSize.X
+    local mouseX = input.Position.X
+    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
+    _G.HeadshotChance = pct
+    HeadshotFill.Size = UDim2.new(pct, 0, 1, 0)
+    HeadshotKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+    HeadshotValueLabel.Text = tostring(math.floor(pct * 100)) .. "%"
+end
+
+HeadshotTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        headshotDragging = true
+        UpdateHeadshotSlider(input)
+    end
+end)
+
+-- [[ AIM SMOOTHNESS SLIDER SECTION ]] --
+local SmoothnessSliderFrame = Instance.new("Frame")
+SmoothnessSliderFrame.Name = "SmoothnessSliderFrame"
+SmoothnessSliderFrame.BackgroundColor3 = Theme.Surface
+SmoothnessSliderFrame.Size = UDim2.new(0, 320, 0, 50)
+SmoothnessSliderFrame.Parent = Content
+ApplyCorner(SmoothnessSliderFrame, 8)
+ApplyStroke(SmoothnessSliderFrame, Theme.Border, 1)
+
+local SmoothnessIcon = Instance.new("TextLabel")
+SmoothnessIcon.BackgroundTransparency = 1
+SmoothnessIcon.Position = UDim2.new(0, 12, 0, 6)
+SmoothnessIcon.Size = UDim2.new(0, 20, 0, 20)
+SmoothnessIcon.Font = Enum.Font.GothamBold
+SmoothnessIcon.Text = "🎚"
+SmoothnessIcon.TextColor3 = Theme.Warning
+SmoothnessIcon.TextSize = 14
+SmoothnessIcon.Parent = SmoothnessSliderFrame
+
+local SmoothnessTitle = Instance.new("TextLabel")
+SmoothnessTitle.BackgroundTransparency = 1
+SmoothnessTitle.Position = UDim2.new(0, 35, 0, 6)
+SmoothnessTitle.Size = UDim2.new(0, 140, 0, 20)
+SmoothnessTitle.Font = Enum.Font.GothamMedium
+SmoothnessTitle.Text = "Aim Smoothness"
+SmoothnessTitle.TextColor3 = Theme.TextMuted
+SmoothnessTitle.TextSize = 12
+SmoothnessTitle.TextXAlignment = Enum.TextXAlignment.Left
+SmoothnessTitle.Parent = SmoothnessSliderFrame
+
+local SmoothnessValueLabel = Instance.new("TextLabel")
+SmoothnessValueLabel.Name = "Value"
+SmoothnessValueLabel.BackgroundTransparency = 1
+SmoothnessValueLabel.Position = UDim2.new(1, -75, 0, 6)
+SmoothnessValueLabel.Size = UDim2.new(0, 60, 0, 20)
+SmoothnessValueLabel.Font = Enum.Font.GothamBold
+SmoothnessValueLabel.Text = string.format("%.2f", _G.AimSmoothness)
+SmoothnessValueLabel.TextColor3 = Theme.Warning
+SmoothnessValueLabel.TextSize = 12
+SmoothnessValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+SmoothnessValueLabel.Parent = SmoothnessSliderFrame
+
+local SmoothnessTrack = Instance.new("Frame")
+SmoothnessTrack.Name = "Track"
+SmoothnessTrack.BackgroundColor3 = Theme.SurfaceHover
+SmoothnessTrack.Position = UDim2.new(0, 12, 0, 32)
+SmoothnessTrack.Size = UDim2.new(1, -24, 0, 6)
+SmoothnessTrack.Parent = SmoothnessSliderFrame
+ApplyCorner(SmoothnessTrack, 3)
+
+local minSmooth, maxSmooth = 0.01, 1.0
+local smInitialPct = math.clamp((_G.AimSmoothness - minSmooth) / (maxSmooth - minSmooth), 0, 1)
+
+local SmoothnessFill = Instance.new("Frame")
+SmoothnessFill.Name = "Fill"
+SmoothnessFill.BackgroundColor3 = Theme.Warning
+SmoothnessFill.Size = UDim2.new(smInitialPct, 0, 1, 0)
+SmoothnessFill.Parent = SmoothnessTrack
+ApplyCorner(SmoothnessFill, 3)
+
+local SmoothnessKnob = Instance.new("Frame")
+SmoothnessKnob.Name = "Knob"
+SmoothnessKnob.BackgroundColor3 = Theme.Text
+SmoothnessKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+SmoothnessKnob.Position = UDim2.new(smInitialPct, 0, 0.5, 0)
+SmoothnessKnob.Size = UDim2.new(0, 14, 0, 14)
+SmoothnessKnob.Parent = SmoothnessTrack
+ApplyCorner(SmoothnessKnob, 7)
+ApplyStroke(SmoothnessKnob, Theme.Warning, 2)
+
+local smoothDragging = false
+
+local function UpdateSmoothnessSlider(input)
+    local trackPos = SmoothnessTrack.AbsolutePosition.X
+    local trackWidth = SmoothnessTrack.AbsoluteSize.X
+    local mouseX = input.Position.X
+    local pct = math.clamp((mouseX - trackPos) / trackWidth, 0, 1)
+    local val = minSmooth + (maxSmooth - minSmooth) * pct
+    _G.AimSmoothness = val
+    SmoothnessFill.Size = UDim2.new(pct, 0, 1, 0)
+    SmoothnessKnob.Position = UDim2.new(pct, 0, 0.5, 0)
+    SmoothnessValueLabel.Text = string.format("%.2f", val)
+end
+
+SmoothnessTrack.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        smoothDragging = true
+        UpdateSmoothnessSlider(input)
+    end
+end)
+end
+
+-- Forward-declare drag variables (used by consolidated handler below AND drag sections later)
+local openBtnDragging, openBtnDragInput, openBtnDragStart, openBtnStartPos
+local dragging, dragInput, dragStart, startPos
+
+
+end
+-- [[ CONSOLIDATED INPUT HANDLERS (performance: 1 connection instead of many) ]] --
+UserInputService.InputChanged:Connect(function(input)
+    local isMouse = input.UserInputType == Enum.UserInputType.MouseMovement
+    local isTouch = input.UserInputType == Enum.UserInputType.Touch
+    if not isMouse and not isTouch then return end
+
+    -- Slider drags
+    if fovDragging then UpdateFOVSlider(input) end
+    if headshotDragging then UpdateHeadshotSlider(input) end
+    if smoothDragging then UpdateSmoothnessSlider(input) end
+
+    -- Window / button drags
+    if input == openBtnDragInput and openBtnDragging then
+        local delta = input.Position - openBtnDragStart
+        OpenBtn.Position = UDim2.new(openBtnStartPos.X.Scale, openBtnStartPos.X.Offset + delta.X, openBtnStartPos.Y.Scale, openBtnStartPos.Y.Offset + delta.Y)
+    end
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if fovDragging or headshotDragging or smoothDragging then
+            SaveConfig()
         end
+        fovDragging = false
+        headshotDragging = false
+        smoothDragging = false
+    end
+end)
+
+-- [[ TOGGLE BUTTONS SECTION ]] --
+local ToggleGrid = Instance.new("Frame")
+ToggleGrid.Name = "ToggleGrid"
+ToggleGrid.BackgroundTransparency = 1
+ToggleGrid.AutomaticSize = Enum.AutomaticSize.Y
+ToggleGrid.Size = UDim2.new(1, 0, 0, 470)
+ToggleGrid.Parent = Content
+
+local GridLayout = Instance.new("UIGridLayout")
+GridLayout.CellSize = UDim2.new(0, 155, 0, 40)
+GridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
+GridLayout.Parent = ToggleGrid
+
+local function CreateToggleButton(name, icon, isActive)
+    local Button = Instance.new("TextButton")
+    Button.Name = name
+    Button.BackgroundColor3 = isActive and Theme.Accent or Theme.Surface
+    Button.Size = UDim2.new(0, 155, 0, 40)
+    Button.Font = Enum.Font.GothamBold
+    Button.Text = ""
+    Button.AutoButtonColor = false
+    Button.Parent = ToggleGrid
+    ApplyCorner(Button, 8)
+
+    local stroke = ApplyStroke(Button, isActive and Theme.AccentGlow or Theme.Border, 1)
+
+    local IconLabel = Instance.new("TextLabel")
+    IconLabel.Name = "Icon"
+    IconLabel.BackgroundTransparency = 1
+    IconLabel.Position = UDim2.new(0, 12, 0, 0)
+    IconLabel.Size = UDim2.new(0, 20, 1, 0)
+    IconLabel.Font = Enum.Font.SourceSans
+    IconLabel.Text = icon
+    IconLabel.TextColor3 = isActive and Theme.Text or Theme.TextMuted
+    IconLabel.TextSize = 16
+    IconLabel.Parent = Button
+
+    local Label = Instance.new("TextLabel")
+    Label.Name = "Label"
+    Label.BackgroundTransparency = 1
+    Label.Position = UDim2.new(0, 35, 0, 0)
+    Label.Size = UDim2.new(1, -70, 1, 0)
+    Label.Font = Enum.Font.GothamMedium
+    Label.Text = name
+    Label.TextColor3 = isActive and Theme.Text or Theme.TextMuted
+    Label.TextSize = 11
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Parent = Button
+
+    local Status = Instance.new("Frame")
+    Status.Name = "Status"
+    Status.BackgroundColor3 = isActive and Theme.Success or Theme.Danger
+    Status.Position = UDim2.new(1, -20, 0.5, -5)
+    Status.Size = UDim2.new(0, 10, 0, 10)
+    Status.Parent = Button
+    ApplyCorner(Status, 999)
+
+    local function UpdateState(active)
+        Button.BackgroundColor3 = active and Theme.Accent or Theme.Surface
+        IconLabel.TextColor3 = active and Theme.Text or Theme.TextMuted
+        Label.TextColor3 = active and Theme.Text or Theme.TextMuted
+        Status.BackgroundColor3 = active and Theme.Success or Theme.Danger
+        stroke.Color = active and Theme.AccentGlow or Theme.Border
+    end
+
+    return Button, UpdateState
+end
+
+do
+    local AutoAimBtn,   UpdateAutoAim        = CreateToggleButton("Auto Aim [T]", "🎯", false)
+    _updateAutoAimFunc = UpdateAutoAim
+    local AutoShootBtn, UpdateAutoShoot      = CreateToggleButton("Auto Shoot",   "🔫", _G.AutoShoot)
+    local AimModeBtn,   UpdateAimMode        = CreateToggleButton("Smooth Aim",   "🔄", false)
+    local TeamCheckBtn, UpdateTeamCheck      = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
+    local MobilePadBtn, UpdateMobilePadToggle = CreateToggleButton("Mobile Pad",   "🕹️", _G.MobilePadEnabled)
+    local FOVBtn,       UpdateShowFOV        = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
+    local EspBtn,       UpdateEsp            = CreateToggleButton("ESP",          "👁", false)
+    local BrightBtn,    UpdateBright         = CreateToggleButton("FullBright",   "☀️", false)
+    local NoclipBtn,    UpdateNoclip         = CreateToggleButton("Noclip",       "👻", false)
+    local FlyBtn,       UpdateFly            = CreateToggleButton("Fly",          "🚀", false)
+    local SpeedBtn,     UpdateSpeed          = CreateToggleButton("Speed",        "⚡", false)
+    local InfJumpBtn,   UpdateInfJump        = CreateToggleButton("Inf Jump",     "🦘", false)
+    local KillAuraBtn,  UpdateKillAura       = CreateToggleButton("Kill Aura",    "💀", false)
+    local ReachBtn,     UpdateReach          = CreateToggleButton("Reach",        "🗡", false)
+    local FreeCamBtn,   UpdateFreeCam        = CreateToggleButton("FreeCam",      "🎥", false)
+    local SafeBtn,      UpdateSafe           = CreateToggleButton("Safe Mode",    "🛡",  true)
+
+    AutoAimBtn.MouseButton1Click:Connect(function() ToggleAutoAim() end)
+    AutoShootBtn.MouseButton1Click:Connect(function() _G.AutoShoot = not _G.AutoShoot; UpdateAutoShoot(_G.AutoShoot); SaveConfig() end)
+    AimModeBtn.MouseButton1Click:Connect(function() _G.SmoothAim = not _G.SmoothAim; UpdateAimMode(_G.SmoothAim); SaveConfig() end)
+    TeamCheckBtn.MouseButton1Click:Connect(function() _G.TeamCheck = not _G.TeamCheck; UpdateTeamCheck(_G.TeamCheck); SaveConfig() end)
+    FOVBtn.MouseButton1Click:Connect(function() _G.ShowFOV = not _G.ShowFOV; UpdateShowFOV(_G.ShowFOV); SaveConfig() end)
+    EspBtn.MouseButton1Click:Connect(function() _G.EspEnabled = not _G.EspEnabled; UpdateEsp(_G.EspEnabled) end)
+    BrightBtn.MouseButton1Click:Connect(function() _G.FullBright = not _G.FullBright; UpdateBright(_G.FullBright) end)
+    NoclipBtn.MouseButton1Click:Connect(function() _G.Noclip = not _G.Noclip; UpdateNoclip(_G.Noclip) end)
+    FlyBtn.MouseButton1Click:Connect(function() _G.Fly = not _G.Fly; UpdateFly(_G.Fly); if not _G.Fly then StopFly() end end)
+    SpeedBtn.MouseButton1Click:Connect(function() _G.SpeedEnabled = not _G.SpeedEnabled; UpdateSpeed(_G.SpeedEnabled) end)
+    InfJumpBtn.MouseButton1Click:Connect(function() _G.InfJump = not _G.InfJump; UpdateInfJump(_G.InfJump) end)
+    KillAuraBtn.MouseButton1Click:Connect(function() _G.KillAura = not _G.KillAura; UpdateKillAura(_G.KillAura) end)
+    ReachBtn.MouseButton1Click:Connect(function() _G.ReachEnabled = not _G.ReachEnabled; UpdateReach(_G.ReachEnabled); if _G.ReachEnabled then CreateReachPart() else DestroyReachPart() end end)
+    FreeCamBtn.MouseButton1Click:Connect(function() _G.FreeCam = not _G.FreeCam; UpdateFreeCam(_G.FreeCam); ToggleFreeCam(_G.FreeCam) end)
+    SafeBtn.MouseButton1Click:Connect(function() _G.SafeMode = not _G.SafeMode; UpdateSafe(_G.SafeMode) end)
+
+    MobilePadBtn.MouseButton1Click:Connect(function()
+        _G.MobilePadEnabled = not _G.MobilePadEnabled
+        UpdateMobilePadToggle(_G.MobilePadEnabled)
+        if MobilePadFrame then MobilePadFrame.Visible = _G.MobilePadEnabled end
+        if not _G.MobilePadEnabled then ResetMobilePad() end
+        SaveConfig()
     end)
-end)
+end
 
--- TP to Player
-TpPlayerBtn.MouseButton1Click:Connect(function()
-    if _G.SelectedPlayer ~= "" then
-        local target = Players:FindFirstChild(_G.SelectedPlayer)
-        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-            local char = LocalPlayer.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                char.HumanoidRootPart.CFrame = target.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, 3)
+-- [[ ACTION BUTTONS ]] --
+local ActionSection = Instance.new("Frame")
+ActionSection.Name = "ActionSection"
+ActionSection.BackgroundTransparency = 1
+ActionSection.Size = UDim2.new(1, 0, 0, 45)
+ActionSection.Parent = Content
+
+local function CreateActionButton(name, color, width)
+    local Button = Instance.new("TextButton")
+    Button.Name = name
+    Button.BackgroundColor3 = color
+    Button.Size = UDim2.new(0, width, 0, 40)
+    Button.Font = Enum.Font.GothamBold
+    Button.Text = name
+    Button.TextColor3 = Theme.Text
+    Button.TextSize = 11
+    Button.AutoButtonColor = false
+    Button.Parent = ActionSection
+    ApplyCorner(Button, 8)
+
+    Button.MouseEnter:Connect(function()
+        CreateTween(Button, {BackgroundTransparency = 0.2}, 0.15):Play()
+    end)
+    Button.MouseLeave:Connect(function()
+        CreateTween(Button, {BackgroundTransparency = 0}, 0.15):Play()
+    end)
+
+    return Button
+end
+
+local ActionLayout = Instance.new("UIListLayout")
+ActionLayout.FillDirection = Enum.FillDirection.Horizontal
+ActionLayout.Padding = UDim.new(0, 10)
+ActionLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ActionLayout.Parent = ActionSection
+
+local TpToolBtn       = CreateActionButton("🔧 TP Tool",  Color3.fromRGB(59, 130, 246), 100)
+local TpPlayerBtn     = CreateActionButton("🎯 Teleport", Color3.fromRGB(168, 85, 247), 100)
+local IgnorePlayerBtn = CreateActionButton("🚫 Ignore",   Color3.fromRGB(239, 68, 68), 100)
+
+-- [[ SETTINGS SECTION ]] --
+local SettingsSection = Instance.new("Frame")
+SettingsSection.Name = "SettingsSection"
+SettingsSection.BackgroundColor3 = Theme.Surface
+SettingsSection.Size = UDim2.new(1, 0, 0, 85)
+SettingsSection.Parent = Content
+ApplyCorner(SettingsSection, 10)
+ApplyStroke(SettingsSection, Theme.Border, 1)
+
+local SettingsHeader = Instance.new("Frame")
+SettingsHeader.Name = "Header"
+SettingsHeader.BackgroundColor3 = Theme.SurfaceHover
+SettingsHeader.Size = UDim2.new(1, 0, 0, 32)
+SettingsHeader.Parent = SettingsSection
+ApplyCorner(SettingsHeader, 10)
+
+local SettingsHeaderFix = Instance.new("Frame")
+SettingsHeaderFix.BackgroundColor3 = Theme.SurfaceHover
+SettingsHeaderFix.Position = UDim2.new(0, 0, 1, -10)
+SettingsHeaderFix.Size = UDim2.new(1, 0, 0, 10)
+SettingsHeaderFix.BorderSizePixel = 0
+SettingsHeaderFix.Parent = SettingsHeader
+
+local SettingsTitle = Instance.new("TextLabel")
+SettingsTitle.BackgroundTransparency = 1
+SettingsTitle.Position = UDim2.new(0, 12, 0, 0)
+SettingsTitle.Size = UDim2.new(1, -24, 1, 0)
+SettingsTitle.Font = Enum.Font.GothamBold
+SettingsTitle.Text = "⚙️ Settings"
+SettingsTitle.TextColor3 = Theme.Text
+SettingsTitle.TextSize = 11
+SettingsTitle.TextXAlignment = Enum.TextXAlignment.Left
+SettingsTitle.Parent = SettingsHeader
+
+local SettingsGrid = Instance.new("Frame")
+SettingsGrid.Name = "SettingsGrid"
+SettingsGrid.BackgroundTransparency = 1
+SettingsGrid.Position = UDim2.new(0, 8, 0, 38)
+SettingsGrid.Size = UDim2.new(1, -16, 0, 40)
+SettingsGrid.Parent = SettingsSection
+
+local SettingsGridLayout = Instance.new("UIGridLayout")
+SettingsGridLayout.CellSize = UDim2.new(0, 155, 0, 36)
+SettingsGridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
+SettingsGridLayout.Parent = SettingsGrid
+
+local StickyJoystickBtn, UpdateStickyJoystick = CreateToggleButton("Sticky Joystick", "📌", _G.StickyJoystick)
+StickyJoystickBtn.Parent = SettingsGrid
+StickyJoystickBtn.Size = UDim2.new(0, 155, 0, 36)
+
+local MobilePadSettingBtn, UpdateMobilePadSetting = CreateToggleButton("Mobile Pad", "🕹️", _G.MobilePadEnabled)
+MobilePadSettingBtn.Parent = SettingsGrid
+MobilePadSettingBtn.Size = UDim2.new(0, 155, 0, 36)
+
+-- [[ PLAYER SELECTOR ]] --
+local PlayerSection = Instance.new("Frame")
+PlayerSection.Name = "PlayerSection"
+PlayerSection.BackgroundColor3 = Theme.Surface
+PlayerSection.Size = UDim2.new(1, 0, 0, 150)
+PlayerSection.Parent = Content
+ApplyCorner(PlayerSection, 10)
+ApplyStroke(PlayerSection, Theme.Border, 1)
+
+local PlayerHeader = Instance.new("Frame")
+PlayerHeader.Name = "Header"
+PlayerHeader.BackgroundColor3 = Theme.SurfaceHover
+PlayerHeader.Size = UDim2.new(1, 0, 0, 32)
+PlayerHeader.Parent = PlayerSection
+ApplyCorner(PlayerHeader, 10)
+
+local PlayerHeaderFix = Instance.new("Frame")
+PlayerHeaderFix.BackgroundColor3 = Theme.SurfaceHover
+PlayerHeaderFix.Position = UDim2.new(0, 0, 1, -10)
+PlayerHeaderFix.Size = UDim2.new(1, 0, 0, 10)
+PlayerHeaderFix.BorderSizePixel = 0
+PlayerHeaderFix.Parent = PlayerHeader
+
+local PlayerTitle = Instance.new("TextLabel")
+PlayerTitle.BackgroundTransparency = 1
+PlayerTitle.Position = UDim2.new(0, 12, 0, 0)
+PlayerTitle.Size = UDim2.new(1, -24, 1, 0)
+PlayerTitle.Font = Enum.Font.GothamBold
+PlayerTitle.Text = "👥 Players Online"
+PlayerTitle.TextColor3 = Theme.Text
+PlayerTitle.TextSize = 11
+PlayerTitle.TextXAlignment = Enum.TextXAlignment.Left
+PlayerTitle.Parent = PlayerHeader
+
+local PlayerCount = Instance.new("TextLabel")
+PlayerCount.Name = "Count"
+PlayerCount.BackgroundTransparency = 1
+PlayerCount.Position = UDim2.new(1, -40, 0, 0)
+PlayerCount.Size = UDim2.new(0, 30, 1, 0)
+PlayerCount.Font = Enum.Font.GothamBold
+PlayerCount.Text = "0"
+PlayerCount.TextColor3 = Theme.Accent
+PlayerCount.TextSize = 11
+PlayerCount.Parent = PlayerHeader
+
+local PlayerScroll = Instance.new("ScrollingFrame")
+PlayerScroll.Name = "Scroll"
+PlayerScroll.BackgroundTransparency = 1
+PlayerScroll.Position = UDim2.new(0, 8, 0, 38)
+PlayerScroll.Size = UDim2.new(1, -16, 1, -46)
+PlayerScroll.ScrollBarThickness = 2
+PlayerScroll.ScrollBarImageColor3 = Theme.Accent
+PlayerScroll.ScrollBarImageTransparency = 0.5
+PlayerScroll.Parent = PlayerSection
+
+local PlayerListLayout = Instance.new("UIListLayout")
+PlayerListLayout.Padding = UDim.new(0, 4)
+PlayerListLayout.Parent = PlayerScroll
+
+PlayerListUI.Scroll = PlayerScroll
+PlayerListUI.Count = PlayerCount
+
+-- Open Button (when minimized)
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Name = "OpenBtn"
+OpenBtn.BackgroundColor3 = Theme.Accent
+OpenBtn.Position = UDim2.new(0, 20, 0, 20)
+OpenBtn.Size = UDim2.new(0, 50, 0, 50)
+OpenBtn.Font = Enum.Font.GothamBlack
+OpenBtn.Text = "Z"
+OpenBtn.TextColor3 = Theme.Text
+OpenBtn.TextSize = 20
+OpenBtn.Visible = false
+OpenBtn.ZIndex = 100
+OpenBtn.Parent = ScreenGui
+ApplyCorner(OpenBtn, 25)
+ApplyStroke(OpenBtn, Theme.AccentGlow, 2)
+
+-- Make OpenBtn draggable (variables forward-declared above)
+
+OpenBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        openBtnDragging = true
+        openBtnDragStart = input.Position
+        openBtnStartPos = OpenBtn.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                openBtnDragging = false
             end
-        end
-    end
-end)
-
--- Ignore Player
-IgnorePlayerBtn.MouseButton1Click:Connect(function()
-    if _G.SelectedPlayer ~= "" then
-        local p = Players:FindFirstChild(_G.SelectedPlayer)
-        if p then
-            local newState = not (_G.IgnoredPlayers[p.Name] or false)
-            _G.IgnoredPlayers[p.Name] = newState
-            _G.IgnoredPlayers[p.DisplayName] = newState
-            _G.IgnoredPlayers[tostring(p.UserId)] = newState
-        else
-            _G.IgnoredPlayers[_G.SelectedPlayer] = not _G.IgnoredPlayers[_G.SelectedPlayer]
-        end
-        RefreshPlayers()
-    end
-end)
-
--- Infinite Jump
-UserInputService.JumpRequest:Connect(function()
-    if _G.InfJump and LocalPlayer.Character then
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-    end
-end)
-
--- Keybind Shortcuts (T for Auto Aim)
-local _autoAimDebounce = false
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    if UserInputService:GetFocusedTextBox() ~= nil then return end
-
-    if input.KeyCode == Enum.KeyCode.T then
-        -- Prevent repeat-key and double-fire
-        if _autoAimDebounce then return end
-        _autoAimDebounce = true
-
-        ToggleAutoAim()
-
-        task.delay(0.15, function()
-            _autoAimDebounce = false
         end)
     end
 end)
 
--- Character Added Handler for Reach
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    if _G.ReachEnabled then
-        CreateReachPart()
+OpenBtn.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        openBtnDragInput = input
+    end
+end)
+
+
+-- [[ DRAGGING ]] -- (variables forward-declared above)
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+Header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+
+-- [[ PLAYER LIST REFRESH ]] --
+local function RefreshPlayers()
+    for _, v in pairs(PlayerListUI.Scroll:GetChildren()) do
+        if v:IsA("Frame") or v:IsA("TextButton") then v:Destroy() end
+    end
+
+    local count = 0
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            count = count + 1
+
+            local isIgnored = _G.IgnoredPlayers[p.Name] == true
+            local isSelected = (_G.SelectedPlayer == p.Name)
+
+            local PlayerRow = Instance.new("Frame")
+            PlayerRow.Name = p.Name
+            PlayerRow.BackgroundTransparency = 1
+            PlayerRow.Size = UDim2.new(1, 0, 0, 28)
+            PlayerRow.Parent = PlayerListUI.Scroll
+
+            local PlayerBtn = Instance.new("TextButton")
+            PlayerBtn.Name = "SelectBtn"
+            PlayerBtn.BackgroundColor3 = isSelected and Theme.Accent or Theme.SurfaceHover
+            PlayerBtn.Size = UDim2.new(1, -70, 1, 0)
+            PlayerBtn.Font = Enum.Font.GothamMedium
+            PlayerBtn.Text = "  " .. p.DisplayName
+            PlayerBtn.TextColor3 = isSelected and Theme.Text or Theme.TextMuted
+            PlayerBtn.TextSize = 11
+            PlayerBtn.TextXAlignment = Enum.TextXAlignment.Left
+            PlayerBtn.AutoButtonColor = false
+            PlayerBtn.Parent = PlayerRow
+            ApplyCorner(PlayerBtn, 6)
+
+            local IgnoreBtn = Instance.new("TextButton")
+            IgnoreBtn.Name = "IgnoreBtn"
+            IgnoreBtn.BackgroundColor3 = isIgnored and Theme.Danger or Theme.SurfaceHover
+            IgnoreBtn.Position = UDim2.new(1, -65, 0, 0)
+            IgnoreBtn.Size = UDim2.new(0, 65, 1, 0)
+            IgnoreBtn.Font = Enum.Font.GothamBold
+            IgnoreBtn.Text = isIgnored and "Ignored" or "Ignore"
+            IgnoreBtn.TextColor3 = isIgnored and Theme.Text or Theme.TextMuted
+            IgnoreBtn.TextSize = 10
+            IgnoreBtn.AutoButtonColor = false
+            IgnoreBtn.Parent = PlayerRow
+            ApplyCorner(IgnoreBtn, 6)
+
+            PlayerBtn.MouseEnter:Connect(function()
+                if _G.SelectedPlayer ~= p.Name then
+                    CreateTween(PlayerBtn, {BackgroundColor3 = Theme.Border}, 0.1):Play()
+                end
+            end)
+
+            PlayerBtn.MouseLeave:Connect(function()
+                if _G.SelectedPlayer ~= p.Name then
+                    CreateTween(PlayerBtn, {BackgroundColor3 = Theme.SurfaceHover}, 0.1):Play()
+                end
+            end)
+
+            PlayerBtn.MouseButton1Click:Connect(function()
+                _G.SelectedPlayer = p.Name
+                RefreshPlayers()
+            end)
+
+            IgnoreBtn.MouseButton1Click:Connect(function()
+                local newState = not (_G.IgnoredPlayers[p.Name] or false)
+                _G.IgnoredPlayers[p.Name] = newState
+                _G.IgnoredPlayers[p.DisplayName] = newState
+                _G.IgnoredPlayers[tostring(p.UserId)] = newState
+                RefreshPlayers()
+            end)
+        end
+    end
+
+    PlayerListUI.Count.Text = tostring(count)
+    PlayerListUI.Scroll.CanvasSize = UDim2.new(0, 0, 0, count * 32)
+end
+
+RefreshPlayers()
+Players.PlayerAdded:Connect(RefreshPlayers)
+Players.PlayerRemoving:Connect(RefreshPlayers)
+
+-- [[ SESSION TIMER ]] --
+task.spawn(function()
+    local startTime = tick()
+    while task.wait(1) do
+        local elapsed = tick() - startTime
+        local h = math.floor(elapsed / 3600)
+        local m = math.floor((elapsed % 3600) / 60)
+        local s = math.floor(elapsed % 60)
+        SessionLabel.Text = string.format("%02d:%02d:%02d", h, m, s)
     end
 end)
 
@@ -2429,6 +2350,39 @@ RunService.RenderStepped:Connect(function(dt)
     if _G.AutoAim then RunAutoAim(dt) end
     if _G.AutoShoot then RunAutoShoot() end
 end)
+
+-- [[ ZERO-ALLOCATION NOCLIP PART CACHE (PREVENTS GC FRAME DROPS) ]] --
+local _noclipPartsList = {}
+local _noclipCharTracked = nil
+local _noclipAddedConn, _noclipRemovedConn
+
+local function SetupNoclipCache(char)
+    _noclipPartsList = {}
+    if not char then return end
+    for _, v in ipairs(char:GetDescendants()) do
+        if v:IsA("BasePart") then
+            table.insert(_noclipPartsList, v)
+        end
+    end
+    if _noclipAddedConn then _noclipAddedConn:Disconnect() _noclipAddedConn = nil end
+    if _noclipRemovedConn then _noclipRemovedConn:Disconnect() _noclipRemovedConn = nil end
+
+    _noclipAddedConn = char.DescendantAdded:Connect(function(v)
+        if v:IsA("BasePart") then
+            table.insert(_noclipPartsList, v)
+        end
+    end)
+    _noclipRemovedConn = char.DescendantRemoving:Connect(function(v)
+        if v:IsA("BasePart") then
+            for i = #_noclipPartsList, 1, -1 do
+                if _noclipPartsList[i] == v then
+                    table.remove(_noclipPartsList, i)
+                    break
+                end
+            end
+        end
+    end)
+end
 
 -- [[ MAIN LOOP ]] --
 RunService.Stepped:Connect(function()
@@ -2463,30 +2417,37 @@ RunService.Stepped:Connect(function()
     end
 
     -- Skip character logic entirely if all character-modifying features are disabled
-    if not (_G.Noclip or _G.SpeedEnabled or _G.Fly or _G.ReachEnabled) then return end
+    if not (_G.Noclip or _G.SpeedEnabled or _G.Fly or _G.ReachEnabled or (_G.MobilePadEnabled and (_padDragging or (_G.StickyJoystick and _padKnobPos.Magnitude > 0)))) then return end
 
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("Humanoid") then
-        -- Noclip (cached parts — only rescans when character changes)
+        -- Noclip (Zero-Allocation: zero memory allocation per frame -> zero GC frame drops)
         if _G.Noclip then
-            if _G._noclipChar ~= char then
-                _G._noclipChar = char
-                _G._noclipParts = {}
-                for _, v in pairs(char:GetDescendants()) do
-                    if v:IsA("BasePart") then
-                        table.insert(_G._noclipParts, v)
-                    end
+            if _noclipCharTracked ~= char then
+                _noclipCharTracked = char
+                SetupNoclipCache(char)
+            end
+            for i = 1, #_noclipPartsList do
+                local p = _noclipPartsList[i]
+                if p and p.Parent then
+                    p.CanCollide = false
                 end
             end
-            for _, v in pairs(_G._noclipParts) do
-                if v and v.Parent then
-                    v.CanCollide = false
-                end
+        else
+            if _noclipCharTracked then
+                _noclipCharTracked = nil
+                _noclipPartsList = {}
+                if _noclipAddedConn then _noclipAddedConn:Disconnect() _noclipAddedConn = nil end
+                if _noclipRemovedConn then _noclipRemovedConn:Disconnect() _noclipRemovedConn = nil end
             end
         end
 
-        -- Mobile Pad Walk Input
-        if _G.MobilePadEnabled and _mobileMoveVector.Magnitude > 0 then
+        -- Mobile Pad Walk Input (supports Sticky Joystick mode)
+        if _G.MobilePadEnabled and (_padDragging or (_G.StickyJoystick and _padKnobPos.Magnitude > 0)) then
+            local camCFrame = Camera.CFrame
+            local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
+            local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
+            _mobileMoveVector = (right * _padKnobPos.X) + (forward * (-_padKnobPos.Y))
             char.Humanoid:Move(_mobileMoveVector, false)
         end
 
