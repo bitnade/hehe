@@ -216,16 +216,17 @@ ScreenGui.Parent = parentContainer
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.BackgroundColor3 = Theme.Background
-Main.Position = UDim2.new(0.5, -180, 0.5, -240)
+Main.AnchorPoint = Vector2.new(0.5, 0.5)
+Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 Main.Size = UDim2.new(0, 360, 0, 480)
 Main.Parent = ScreenGui
 ApplyCorner(Main, 12)
 ApplyStroke(Main, Theme.Border, 1)
 
--- Mobile UI Scale (automatically scales entire UI smaller on mobile devices)
+-- Mobile UI Scale (automatically scales entire UI comfortably smaller on mobile devices)
 local MainScale = Instance.new("UIScale")
 MainScale.Name = "MainScale"
-MainScale.Scale = UserInputService.TouchEnabled and 0.78 or 1.0
+MainScale.Scale = UserInputService.TouchEnabled and 0.65 or 1.0
 MainScale.Parent = Main
 
 -- Glow Effect
@@ -1899,7 +1900,24 @@ do
 
     local function update(input)
         local delta = input.Position - dragStartUI
-        Main.Position = UDim2.new(startPosUI.X.Scale, startPosUI.X.Offset + delta.X, startPosUI.Y.Scale, startPosUI.Y.Offset + delta.Y)
+        local rawX = startPosUI.X.Offset + delta.X
+        local rawY = startPosUI.Y.Offset + delta.Y
+
+        -- Clamp position so Main window stays inside Viewport bounds
+        local vp = Camera.ViewportSize
+        local scale = (MainScale and MainScale.Scale) or 1.0
+        local halfW = (Main.Size.X.Offset * scale) / 2
+        local halfH = (Main.Size.Y.Offset * scale) / 2
+
+        local minX = -vp.X / 2 + halfW + 5
+        local maxX = vp.X / 2 - halfW - 5
+        local minY = -vp.Y / 2 + halfH + 5
+        local maxY = vp.Y / 2 - halfH - 5
+
+        local clampedX = math.clamp(rawX, minX, maxX)
+        local clampedY = math.clamp(rawY, minY, maxY)
+
+        Main.Position = UDim2.new(0.5, clampedX, 0.5, clampedY)
     end
 
     Header.InputBegan:Connect(function(input)
