@@ -88,6 +88,8 @@ _G.HeadshotChance = 0.40
 _G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
+_G.AutoClicker = false -- true = send mobile touch events at target position
+_G.ClickInterval = 0.1 -- interval between clicks
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
 _G.ReachDistance = 15
 _G.KillAuraRange = 20
@@ -688,6 +690,112 @@ local function RunKillAura()
         KillAuraLastHit[key] = nil
     end
     end
+end
+
+-- [[ CUSTOM MOBILE AUTO CLICKER SYSTEM (NATIVE TOUCH EVENTS) ]] --
+local AutoClickerTarget = Instance.new("Frame")
+AutoClickerTarget.Name = "AutoClickerTarget"
+AutoClickerTarget.Size = UDim2.new(0, 44, 0, 44)
+AutoClickerTarget.Position = UDim2.new(0.5, -22, 0.5, -22)
+AutoClickerTarget.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+AutoClickerTarget.BackgroundTransparency = 0.35
+AutoClickerTarget.Visible = false
+AutoClickerTarget.ZIndex = 2000
+AutoClickerTarget.Parent = ScreenGui
+ApplyCorner(AutoClickerTarget, 999)
+ApplyStroke(AutoClickerTarget, Color3.fromRGB(255, 255, 255), 2, 0.2)
+
+local TargetIcon = Instance.new("TextLabel")
+TargetIcon.Size = UDim2.new(1, 0, 1, 0)
+TargetIcon.BackgroundTransparency = 1
+TargetIcon.Font = Enum.Font.GothamBlack
+TargetIcon.Text = "🎯"
+TargetIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+TargetIcon.TextSize = 20
+TargetIcon.Parent = AutoClickerTarget
+
+local _acDragging = false
+local _acUnlocked = false
+local _acHoldThread = nil
+local _acDragStart = nil
+local _acStartPos = nil
+local strokeRef = ApplyStroke(AutoClickerTarget, Color3.fromRGB(255, 255, 255), 2, 0.2)
+
+AutoClickerTarget.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        _acDragStart = input.Position
+        _acStartPos = AutoClickerTarget.Position
+        _acUnlocked = false
+        _acDragging = false
+
+        -- Visual indicator: amber stroke while holding 2s to unlock drag
+        strokeRef.Color = Color3.fromRGB(251, 191, 36)
+
+        if _acHoldThread then task.cancel(_acHoldThread) end
+
+        _acHoldThread = task.delay(2.0, function()
+            _acUnlocked = true
+            _acDragging = true
+            -- Visual feedback: Green outline + scale up slightly to indicate DRAG UNLOCKED!
+            strokeRef.Color = Color3.fromRGB(34, 197, 94)
+            CreateTween(AutoClickerTarget, {Size = UDim2.new(0, 50, 0, 50)}, 0.15):Play()
+        end)
+
+        local conn
+        conn = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                if _acHoldThread then
+                    task.cancel(_acHoldThread)
+                    _acHoldThread = nil
+                end
+                _acDragging = false
+                _acUnlocked = false
+                strokeRef.Color = Color3.fromRGB(255, 255, 255)
+                CreateTween(AutoClickerTarget, {Size = UDim2.new(0, 44, 0, 44)}, 0.15):Play()
+                if conn then conn:Disconnect() end
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if _acUnlocked and _acDragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        local delta = input.Position - _acDragStart
+        AutoClickerTarget.Position = UDim2.new(_acStartPos.X.Scale, _acStartPos.X.Offset + delta.X, _acStartPos.Y.Scale, _acStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+local _lastClickTime = 0
+local VIM = game:GetService("VirtualInputManager")
+
+local function RunAutoClicker()
+    if not _G.AutoClicker then return end
+    local now = tick()
+    if (now - _lastClickTime) < (_G.ClickInterval or 0.1) then return end
+    _lastClickTime = now
+
+    local centerPos = AutoClickerTarget.AbsolutePosition + (AutoClickerTarget.AbsoluteSize / 2)
+    local posX, posY = centerPos.X, centerPos.Y
+
+    pcall(function()
+        if UserInputService.TouchEnabled then
+            -- Dispatches native mobile Touch events (Touch Begin -> Touch End) without switching input modes!
+            VIM:SendTouchEvent(9999, Enum.UserInputState.Begin, Vector2.new(posX, posY))
+            task.delay(0.02, function()
+                pcall(function()
+                    VIM:SendTouchEvent(9999, Enum.UserInputState.End, Vector2.new(posX, posY))
+                end)
+            end)
+        else
+            -- PC Mouse Click fallback
+            VIM:SendMouseButtonEvent(posX, posY, 0, true, game, 0)
+            task.delay(0.02, function()
+                pcall(function()
+                    VIM:SendMouseButtonEvent(posX, posY, 0, false, game, 0)
+                end)
+            end)
+        end
+    end)
 end
 
 -- [[ AUTO AIM & FOV CIRCLE SYSTEM ]] --
@@ -1424,6 +1532,7 @@ do
     local ReachBtn,     UpdateReach           = CreateToggleButton("Reach",        "🗡", false)
     local FreeCamBtn,   UpdateFreeCam         = CreateToggleButton("FreeCam",      "🎥", false)
     local SafeBtn,      UpdateSafe            = CreateToggleButton("Safe Mode",    "🛡",  true)
+    local ClickerBtn,   UpdateAutoClicker     = CreateToggleButton("Auto Clicker", "🎯", false)
 
     AutoAimBtn.MouseButton1Click:Connect(function() ToggleAutoAim() end)
     AutoShootBtn.MouseButton1Click:Connect(function() _G.AutoShoot = not _G.AutoShoot; UpdateAutoShoot(_G.AutoShoot); SaveConfig() end)
@@ -1474,6 +1583,7 @@ do
         ToggleFreeCam(_G.FreeCam)
     end)
     SafeBtn.MouseButton1Click:Connect(function() _G.SafeMode = not _G.SafeMode; UpdateSafe(_G.SafeMode); SaveConfig() end)
+    ClickerBtn.MouseButton1Click:Connect(function() _G.AutoClicker = not _G.AutoClicker; UpdateAutoClicker(_G.AutoClicker); AutoClickerTarget.Visible = _G.AutoClicker; SaveConfig() end)
 
     -- 2,3,4. Sliders
     local _, _, FovValueLabel = CreateSlider("Aim FOV", 2, "🎯", 10, 600, _G.AimFOV, function(val) _G.AimFOV = val; SaveConfig() end)
@@ -1804,6 +1914,7 @@ if _G.MovementLoopID ~= CurrentLoopID then return end
 UpdateFOVCircle()
 if _G.AutoAim then RunAutoAim(dt) end
 if _G.AutoShoot then RunAutoShoot() end
+if _G.AutoClicker then RunAutoClicker() end
 end)
 
 -- [[ ZERO-ALLOCATION NOCLIP PART CACHE (PREVENTS GC FRAME DROPS) ]] --
