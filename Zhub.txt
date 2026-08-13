@@ -719,24 +719,27 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
+local GuiService = game:GetService("GuiService")
 local function GetCrosshairPosition()
-    return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local vp = Camera.ViewportSize
+    local inset = GuiService:GetGuiInset()
+    return Vector2.new(vp.X / 2, vp.Y / 2 + inset.Y / 2)
 end
 
 local UpdateFOVCircle
 do
     if _G.ZHubFOVCircle then
-    pcall(function() _G.ZHubFOVCircle:Remove() end)
-    pcall(function() _G.ZHubFOVCircle:Destroy() end)
-    _G.ZHubFOVCircle = nil
+        pcall(function() _G.ZHubFOVCircle:Remove() end)
+        pcall(function() _G.ZHubFOVCircle:Destroy() end)
+        _G.ZHubFOVCircle = nil
     end
 
     if parentContainer then
-    for _, child in pairs(parentContainer:GetChildren()) do
-        if child.Name == "FOVCircleGui" or child.Name == "ZHubFOVCircle" then
-            pcall(function() child:Destroy() end)
+        for _, child in pairs(parentContainer:GetChildren()) do
+            if child.Name == "FOVCircleGui" or child.Name == "ZHubFOVCircle" then
+                pcall(function() child:Destroy() end)
+            end
         end
-    end
     end
 
     local isTouch = UserInputService.TouchEnabled
@@ -765,6 +768,7 @@ do
         GuiFOVCircle.Name = "FOVCircleGui"
         GuiFOVCircle.BackgroundTransparency = 1
         GuiFOVCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+        GuiFOVCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
         GuiFOVCircle.Visible = false
         GuiFOVCircle.ZIndex = 1000
         GuiFOVCircle.Active = false -- Never block touch inputs on mobile
@@ -784,9 +788,9 @@ do
 
         local isDotMode = (not _G.AutoAim) and _G.AutoShoot
         local fovRadius = isDotMode and 5 or (_G.AimFOV or 100)
-        local crosshairPos = GetCrosshairPosition()
 
         if FOVCircle then
+            local crosshairPos = GetCrosshairPosition()
             pcall(function()
                 FOVCircle.Radius = fovRadius
                 FOVCircle.Position = crosshairPos
@@ -795,7 +799,7 @@ do
             end)
         elseif GuiFOVCircle then
             GuiFOVCircle.Size = UDim2.new(0, fovRadius * 2, 0, fovRadius * 2)
-            GuiFOVCircle.Position = UDim2.new(0, crosshairPos.X, 0, crosshairPos.Y)
+            GuiFOVCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
             GuiFOVCircle.Visible = true
         end
     end
@@ -1001,28 +1005,23 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- Primary: Tool Activate
+    -- Fire weapon natively via Roblox Lua API without sending fake mouse clicks
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
         pcall(function() tool:Activate() end)
-    end
 
-    -- Secondary: VirtualInputManager / mouse click simulation
-    pcall(function()
-        if mouse1click then
-            mouse1click()
-        elseif mouse1press then
-            mouse1press()
-            task.delay(0.02, function() pcall(mouse1release) end)
-        else
-            local vim = game:GetService("VirtualInputManager")
-            local vp = Camera.ViewportSize
-            vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-            task.delay(0.02, function()
-                vim:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-            end)
-        end
-    end)
+        -- Trigger gun RemoteEvents inside tool for custom gun frameworks
+        pcall(function()
+            for _, child in ipairs(tool:GetDescendants()) do
+                if child:IsA("RemoteEvent") then
+                    local lname = string.lower(child.Name)
+                    if lname:find("shoot") or lname:find("fire") or lname:find("remote") or lname:find("gun") or lname:find("action") or lname:find("bullet") or lname:find("attack") or lname:find("damage") then
+                        pcall(function() child:FireServer() end)
+                    end
+                end
+            end
+        end)
+    end
 end
 
 
