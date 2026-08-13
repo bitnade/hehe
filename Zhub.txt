@@ -1111,27 +1111,47 @@ local function RunAutoShoot()
     -- 2. Input-specific firing method:
     pcall(function()
         if UserInputService.TouchEnabled then
-            -- MOBILE: Dispatch native touch event at ShootTargetWidget position (clicks custom Shoot Button)
+            -- MOBILE: Tap custom Shoot Button position
             if ShootTargetWidget and ShootTargetWidget.Parent then
                 local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
                 local posX, posY = centerPos.X, centerPos.Y
-                local touchId = 1001
-                local pos = Vector2.new(posX, posY)
+                local touchPos = Vector2.new(posX, posY)
 
+                -- Temporarily hide target widget so it doesn't absorb/block the touch tap
+                ShootTargetWidget.Visible = false
+
+                -- Method 1: VirtualInputManager Touch Event at (posX, posY)
                 pcall(function()
-                    VIM:SendTouchEvent(touchId, Enum.UserInputState.Begin, pos)
-                end)
-                pcall(function()
-                    VIM:SendTouchEvent(touchId, 0, pos)
+                    VIM:SendTouchEvent(1001, Enum.UserInputState.Begin, touchPos)
+                    VIM:SendMouseButtonEvent(posX, posY, 0, true, game, 0)
                 end)
 
-                task.delay(0.03, function()
+                -- Method 2: Executor firesignal on any in-game GuiButton sitting under (posX, posY)
+                pcall(function()
+                    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
+                        local guiObjects = LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(posX, posY)
+                        for _, gui in ipairs(guiObjects) do
+                            if gui ~= ShootTargetWidget and not gui:IsDescendantOf(ScreenGui) then
+                                if gui:IsA("GuiButton") or gui:IsA("ImageButton") or gui:IsA("TextButton") then
+                                    if firesignal then
+                                        pcall(function() firesignal(gui.MouseButton1Click) end)
+                                        pcall(function() firesignal(gui.Activated) end)
+                                        pcall(function() firesignal(gui.TouchTap) end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+
+                task.delay(0.025, function()
                     pcall(function()
-                        VIM:SendTouchEvent(touchId, Enum.UserInputState.End, pos)
+                        VIM:SendTouchEvent(1001, Enum.UserInputState.End, touchPos)
+                        VIM:SendMouseButtonEvent(posX, posY, 0, false, game, 0)
                     end)
-                    pcall(function()
-                        VIM:SendTouchEvent(touchId, 2, pos)
-                    end)
+                    if ShootTargetWidget and _G.AutoShoot and UserInputService.TouchEnabled then
+                        ShootTargetWidget.Visible = true
+                    end
                 end)
             end
         else
