@@ -990,7 +990,19 @@ local function IsTeammate(player, charModel)
     local myChar = LocalPlayer.Character
     local char = charModel or (player and player.Character)
     if not player and char then
-        player = Players:GetPlayerFromCharacter(char) or Players:FindFirstChild(char.Name)
+        player = Players:GetPlayerFromCharacter(char)
+        if not player and char.Name then
+            -- Fallback: try finding player by character name or display name
+            player = Players:FindFirstChild(char.Name)
+            if not player then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.DisplayName == char.Name or p.Name == char.Name then
+                        player = p
+                        break
+                    end
+                end
+            end
+        end
     end
     if player == LocalPlayer then return true end
 
@@ -999,37 +1011,47 @@ local function IsTeammate(player, charModel)
         return true
     end
 
-    -- 1. Native Roblox Team check (instance or name)
-    if player and LocalPlayer.Team and player.Team then
-        if LocalPlayer.Team == player.Team then
-            return true
-        end
-        if LocalPlayer.Team.Name ~= "" and LocalPlayer.Team.Name == player.Team.Name then
-            return true
-        end
-    end
-
-    -- 2. TeamColor property check (direct BrickColor match)
-    if player and LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
-        local colName = LocalPlayer.TeamColor.Name
-        if colName ~= "White" and colName ~= "Medium stone grey" then
-            return true
-        end
-    end
-
-    -- 3. Custom Attributes (e.g. Rivals "Team", "TeamId", "MatchTeam", "SquadId", "Squad", "Faction", "Side", "Clan", "Party", "Color")
-    local teamKeys = {"Team", "team", "TeamId", "teamId", "MatchTeam", "matchTeam", "SquadId", "Squad", "squad", "TeamName", "teamName", "Faction", "Side", "Clan", "Party", "GameTeam", "TeamColor", "Color"}
-    for _, key in ipairs(teamKeys) do
-        local myAttr = LocalPlayer:GetAttribute(key) or (myChar and myChar:GetAttribute(key))
-        local targetAttr = (player and player:GetAttribute(key)) or (char and char:GetAttribute(key))
-        if myAttr ~= nil and targetAttr ~= nil then
-            local strMy = tostring(myAttr)
-            local strTarget = tostring(targetAttr)
-            if strMy == strTarget and strMy ~= "" and strMy ~= "None" and strMy ~= "Neutral" and strMy ~= "0" and strMy ~= "nil" and strMy ~= "FFA" then
-                return true
+    -- 1. Native Roblox Team check (pcall-protected for mobile executors)
+    local sameTeam = false
+    pcall(function()
+        if player and LocalPlayer.Team and player.Team then
+            if LocalPlayer.Team == player.Team then
+                sameTeam = true
+            elseif LocalPlayer.Team.Name ~= "" and LocalPlayer.Team.Name == player.Team.Name then
+                sameTeam = true
             end
         end
-    end
+    end)
+    if sameTeam then return true end
+
+    -- 2. TeamColor property check (pcall-protected for mobile executors)
+    local sameColor = false
+    pcall(function()
+        if player and LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
+            local colName = LocalPlayer.TeamColor.Name
+            if colName ~= "White" and colName ~= "Medium stone grey" then
+                sameColor = true
+            end
+        end
+    end)
+    if sameColor then return true end
+
+    -- 3. Custom Attributes (Rivals TeamId, MatchTeam, SquadId, etc.)
+    local teamKeys = {"Team", "team", "TeamId", "teamId", "MatchTeam", "matchTeam", "SquadId", "Squad", "squad", "TeamName", "teamName", "Faction", "Side", "Clan", "Party", "GameTeam", "TeamColor", "Color"}
+    pcall(function()
+        for _, key in ipairs(teamKeys) do
+            local myAttr = LocalPlayer:GetAttribute(key) or (myChar and myChar:GetAttribute(key))
+            local targetAttr = (player and player:GetAttribute(key)) or (char and char:GetAttribute(key))
+            if myAttr ~= nil and targetAttr ~= nil then
+                local strMy = tostring(myAttr)
+                local strTarget = tostring(targetAttr)
+                if strMy == strTarget and strMy ~= "" and strMy ~= "None" and strMy ~= "Neutral" and strMy ~= "0" and strMy ~= "nil" and strMy ~= "FFA" then
+                    sameTeam = true
+                end
+            end
+        end
+    end)
+    if sameTeam then return true end
 
     -- 4. Custom ValueObjects in Player / Character / leaderstats
     local function GetTeamValue(parent)
@@ -1062,14 +1084,72 @@ local function IsTeammate(player, charModel)
         end
     end
 
-    -- 5. Floating Teammate Icon / Custom Healthbar Detection
+    -- 5. Body Color Matching (many mobile games distinguish teams by character body colors)
+    if myChar and char then
+        local function GetBodyColor(c)
+            local bc = c:FindFirstChildOfClass("BodyColors")
+            if bc then
+                return bc.TorsoColor3 or bc.TorsoColor
+            end
+            local torso = c:FindFirstChild("Torso") or c:FindFirstChild("UpperTorso") or c:FindFirstChild("HumanoidRootPart")
+            if torso and torso:IsA("BasePart") then
+                return torso.Color
+            end
+            return nil
+        end
+
+        local myColor = GetBodyColor(myChar)
+        local targetColor = GetBodyColor(char)
+        if myColor and targetColor and typeof(myColor) == "Color3" and typeof(targetColor) == "Color3" then
+            -- Check if colors are very similar (within tolerance for slight rendering differences on mobile)
+            local diff = math.abs(myColor.R - targetColor.R) + math.abs(myColor.G - targetColor.G) + math.abs(myColor.B - targetColor.B)
+            if diff < 0.15 then
+                -- Same body color = likely same team (skip neutral grey/default colors)
+                local brightness = myColor.R + myColor.G + myColor.B
+                if brightness > 0.3 and brightness < 2.7 then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 6. Floating Teammate Icon / Custom Healthbar / Overhead GUI Detection
+    --    Scans BillboardGui AND SurfaceGui on character descendants (mobile games use both)
     if char then
         for _, gui in ipairs(char:GetDescendants()) do
-            if gui:IsA("BillboardGui") then
+            if gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") then
                 local gName = string.lower(gui.Name)
-                -- If the GUI is explicitly named for team/ally/friendly indicators
-                if gName:find("team") or gName:find("ally") or gName:find("friend") or gName:find("mate") or gName:find("squad") then
-                    return true
+                -- Explicitly named team/ally/friendly indicators
+                if gName:find("team") or gName:find("ally") or gName:find("friend") or gName:find("mate") or gName:find("squad") or gName:find("health") or gName:find("name") then
+                    -- For "health" or "name" tags, only count as teammate if my character has one too
+                    if gName:find("team") or gName:find("ally") or gName:find("friend") or gName:find("mate") or gName:find("squad") then
+                        return true
+                    end
+                    -- For healthbar/nametag, check if ONLY teammates have them (my character should have one too)
+                    if myChar then
+                        local myHasGui = false
+                        for _, mg in ipairs(myChar:GetDescendants()) do
+                            if (mg:IsA("BillboardGui") or mg:IsA("SurfaceGui")) and string.lower(mg.Name) == gName then
+                                myHasGui = true
+                                break
+                            end
+                        end
+                        -- Both characters have the same named GUI = likely same team system
+                        if myHasGui then
+                            -- Check for matching color indicators inside
+                            local myLabel, targetLabel
+                            for _, mg in ipairs(myChar:GetDescendants()) do
+                                if (mg:IsA("BillboardGui") or mg:IsA("SurfaceGui")) and string.lower(mg.Name) == gName then
+                                    myLabel = mg:FindFirstChildOfClass("TextLabel")
+                                    break
+                                end
+                            end
+                            targetLabel = gui:FindFirstChildOfClass("TextLabel")
+                            if myLabel and targetLabel and myLabel.TextColor3 == targetLabel.TextColor3 then
+                                return true
+                            end
+                        end
+                    end
                 end
 
                 -- Check for floating icons (ImageLabel inside BillboardGui)
@@ -1081,7 +1161,7 @@ local function IsTeammate(player, charModel)
                     end
                 end
 
-                -- Check for custom healthbar / overhead indicators
+                -- Check for custom healthbar / overhead indicators with friendly colors
                 for _, elem in ipairs(gui:GetDescendants()) do
                     if elem:IsA("TextLabel") then
                         local c = elem.TextColor3
@@ -1103,7 +1183,7 @@ local function IsTeammate(player, charModel)
         end
     end
 
-    -- 6. Rivals In-Game Highlight Detection (Friendly = Green/Cyan/Blue highlight)
+    -- 7. Rivals In-Game Highlight Detection (Friendly = Green/Cyan/Blue highlight)
     if char then
         for _, child in ipairs(char:GetChildren()) do
             if child:IsA("Highlight") and child.Name ~= "ZESP" then
