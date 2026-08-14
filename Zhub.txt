@@ -777,6 +777,8 @@ end)
 
 -- [[ AUTO AIM & FOV CIRCLE SYSTEM ]] --
 local _updateAutoAimFunc = nil
+local CurrentLockedTarget = nil  -- The character Model we're locked onto
+local _lastTargetChar = nil      -- Grace period tracking
 local function ToggleAutoAim(forcedState)
     if forcedState ~= nil then
         _G.AutoAim = forcedState
@@ -785,6 +787,7 @@ local function ToggleAutoAim(forcedState)
     end
     if not _G.AutoAim then
         CurrentLockedTarget = nil
+        _lastTargetChar = nil
     end
     if _updateAutoAimFunc then
         pcall(function() _updateAutoAimFunc(_G.AutoAim) end)
@@ -798,46 +801,52 @@ end
 local _lastToggleTime = 0
 local function HandleToggleAutoAimKey()
     local now = tick()
-    if (now - _lastToggleTime) < 0.15 then return end
+    if (now - _lastToggleTime) < 0.18 then return end
     _lastToggleTime = now
     ToggleAutoAim()
 end
 
--- Primary: UserInputService InputBegan
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if input.KeyCode == Enum.KeyCode.T then
-        local focused = UserInputService:GetFocusedTextBox()
-        if focused and focused:IsA("TextBox") then return end
-        HandleToggleAutoAimKey()
+local function IsTypingInTextBox()
+    local focused = UserInputService:GetFocusedTextBox()
+    if focused and focused:IsA("TextBox") and focused.Visible and focused.AbsoluteSize.Y > 5 then
+        return true
     end
-end)
+    return false
+end
 
--- Secondary: ContextActionService (Non-blocking Pass)
+-- 1. ContextActionService Binding (High Priority 3000)
+local CAS = game:GetService("ContextActionService")
 pcall(function()
-    local CAS = game:GetService("ContextActionService")
     CAS:UnbindAction("ZHub_ToggleAutoAim")
-    CAS:BindAction(
+    CAS:BindActionAtPriority(
         "ZHub_ToggleAutoAim",
         function(actionName, inputState, inputObject)
             if inputState == Enum.UserInputState.Begin then
-                local focused = UserInputService:GetFocusedTextBox()
-                if focused and focused:IsA("TextBox") then return Enum.ContextActionResult.Pass end
+                if IsTypingInTextBox() then return Enum.ContextActionResult.Pass end
                 HandleToggleAutoAimKey()
             end
             return Enum.ContextActionResult.Pass
         end,
         false,
+        3000,
         Enum.KeyCode.T
     )
 end)
 
--- Tertiary: Mouse.KeyDown
+-- 2. UserInputService InputBegan
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.KeyCode == Enum.KeyCode.T then
+        if IsTypingInTextBox() then return end
+        HandleToggleAutoAimKey()
+    end
+end)
+
+-- 3. Mouse.KeyDown Fallback
 pcall(function()
     if Mouse and Mouse.KeyDown then
         Mouse.KeyDown:Connect(function(key)
             if key and string.lower(key) == "t" then
-                local focused = UserInputService:GetFocusedTextBox()
-                if focused and focused:IsA("TextBox") then return end
+                if IsTypingInTextBox() then return end
                 HandleToggleAutoAimKey()
             end
         end)
@@ -945,11 +954,12 @@ local function IsPartVisible(targetPart)
     if not myChar or not targetPart then return false end
 
     local origin = Camera.CFrame.Position
-    local direction = targetPart.Position - origin
-    if direction.Magnitude < 4.0 then return true end
+    local targetPos = targetPart.Position
+    local direction = targetPos - origin
+    if direction.Magnitude < 3.0 then return true end
 
-    -- Build exclude list once
-    AimRayParams.FilterDescendantsInstances = {myChar, targetPart.Parent}
+    -- Exclude only our own character so any wall or obstacle between camera and target is caught
+    AimRayParams.FilterDescendantsInstances = {myChar}
 
     local hit = workspace:Raycast(origin, direction, AimRayParams)
     if not hit then return true end
@@ -957,26 +967,32 @@ local function IsPartVisible(targetPart)
     local inst = hit.Instance
     if not inst then return true end
 
-    -- Allow shots through: own character parts, non-collidable, transparent, accessories
-    if inst:IsDescendantOf(targetPart.Parent) then return true end
-    if inst.CanCollide == false then return true end
-    if inst.Transparency >= 0.5 then return true end
-    if inst:IsA("Accessory") or inst:FindFirstAncestorWhichIsA("Accessory") then return true end
+    -- If the ray directly hits the target character or one of its parts, it has clear line of sight
+    local targetModel = targetPart.Parent
+    if targetModel and inst:IsDescendantOf(targetModel) then
+        return true
+    end
 
+    -- Hit a wall or obstacle
     return false
 end
 
 -- [[ TARGET SELECTION ]] --
-local CurrentLockedTarget = nil  -- The character Model we're locked onto
+-- CurrentLockedTarget declared above ToggleAutoAim so both systems share the same variable
 local CurrentAimIsHead = false   -- Whether this engagement aims at head height
 
 -- [[ TEAMMATE / HARMABILITY CHECK ]] --
-local function IsTeammate(player)
+local function IsTeammate(player, charModel)
     if not _G.TeamCheck then return false end
-    if not player or player == LocalPlayer then return false end
+    if not player and not charModel then return false end
+    if player == LocalPlayer then return true end
 
     local myChar = LocalPlayer.Character
-    local char = player.Character
+    local char = charModel or (player and player.Character)
+    if not player and char then
+        player = Players:GetPlayerFromCharacter(char) or Players:FindFirstChild(char.Name)
+    end
+    if player == LocalPlayer then return true end
 
     -- ForceField check: player has spawn protection / invincibility
     if char and char:FindFirstChildOfClass("ForceField") then
@@ -984,7 +1000,7 @@ local function IsTeammate(player)
     end
 
     -- 1. Native Roblox Team check (instance or name)
-    if LocalPlayer.Team and player.Team then
+    if player and LocalPlayer.Team and player.Team then
         if LocalPlayer.Team == player.Team then
             return true
         end
@@ -994,7 +1010,7 @@ local function IsTeammate(player)
     end
 
     -- 2. TeamColor property check (direct BrickColor match)
-    if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
+    if player and LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
         local colName = LocalPlayer.TeamColor.Name
         if colName ~= "White" and colName ~= "Medium stone grey" then
             return true
@@ -1005,7 +1021,7 @@ local function IsTeammate(player)
     local teamKeys = {"Team", "team", "TeamId", "teamId", "MatchTeam", "matchTeam", "SquadId", "Squad", "squad", "TeamName", "teamName", "Faction", "Side", "Clan", "Party", "GameTeam", "TeamColor", "Color"}
     for _, key in ipairs(teamKeys) do
         local myAttr = LocalPlayer:GetAttribute(key) or (myChar and myChar:GetAttribute(key))
-        local targetAttr = player:GetAttribute(key) or (char and char:GetAttribute(key))
+        local targetAttr = (player and player:GetAttribute(key)) or (char and char:GetAttribute(key))
         if myAttr ~= nil and targetAttr ~= nil then
             local strMy = tostring(myAttr)
             local strTarget = tostring(targetAttr)
@@ -1037,7 +1053,7 @@ local function IsTeammate(player)
     end
 
     local myVal = GetTeamValue(LocalPlayer) or GetTeamValue(myChar)
-    local targetVal = GetTeamValue(player) or GetTeamValue(char)
+    local targetVal = (player and GetTeamValue(player)) or GetTeamValue(char)
     if myVal ~= nil and targetVal ~= nil then
         local strMy = tostring(myVal)
         local strTarget = tostring(targetVal)
@@ -1046,20 +1062,41 @@ local function IsTeammate(player)
         end
     end
 
-    -- 5. Character Overhead / Nametag Color Matching
-    if myChar and char then
-        local myHead = myChar:FindFirstChild("Head")
-        local targetHead = char:FindFirstChild("Head")
-        if myHead and targetHead then
-            local myTag = myHead:FindFirstChildOfClass("BillboardGui")
-            local targetTag = targetHead:FindFirstChildOfClass("BillboardGui")
-            if myTag and targetTag then
-                local myLabel = myTag:FindFirstChildOfClass("TextLabel")
-                local targetLabel = targetTag:FindFirstChildOfClass("TextLabel")
-                if myLabel and targetLabel and myLabel.TextColor3 == targetLabel.TextColor3 then
-                    local c = myLabel.TextColor3
-                    if (c.G > 0.6 and c.R < 0.4) or (c.B > 0.6 and c.R < 0.4) then
+    -- 5. Floating Teammate Icon / Custom Healthbar Detection
+    if char then
+        for _, gui in ipairs(char:GetDescendants()) do
+            if gui:IsA("BillboardGui") then
+                local gName = string.lower(gui.Name)
+                -- If the GUI is explicitly named for team/ally/friendly indicators
+                if gName:find("team") or gName:find("ally") or gName:find("friend") or gName:find("mate") or gName:find("squad") then
+                    return true
+                end
+
+                -- Check for floating icons (ImageLabel inside BillboardGui)
+                local img = gui:FindFirstChildOfClass("ImageLabel")
+                if img and img.Visible then
+                    local imgName = string.lower(img.Name)
+                    if imgName:find("team") or imgName:find("icon") or imgName:find("ally") or imgName:find("marker") or imgName:find("indicator") then
                         return true
+                    end
+                end
+
+                -- Check for custom healthbar / overhead indicators
+                for _, elem in ipairs(gui:GetDescendants()) do
+                    if elem:IsA("TextLabel") then
+                        local c = elem.TextColor3
+                        -- Friendly green or cyan text
+                        if (c.G > 0.6 and c.R < 0.4) or (c.B > 0.6 and c.R < 0.4) then
+                            return true
+                        end
+                    elseif elem:IsA("Frame") or elem:IsA("ImageLabel") then
+                        local c = elem.BackgroundColor3
+                        if elem:IsA("ImageLabel") and elem.ImageColor3 then
+                            c = elem.ImageColor3
+                        end
+                        if c and typeof(c) == "Color3" and ((c.G > 0.7 and c.R < 0.3) or (c.B > 0.7 and c.R < 0.3)) then
+                            return true
+                        end
                     end
                 end
             end
@@ -1070,11 +1107,13 @@ local function IsTeammate(player)
     if char then
         for _, child in ipairs(char:GetChildren()) do
             if child:IsA("Highlight") and child.Name ~= "ZESP" then
-                local c = child.OutlineColor or child.FillColor
-                if c then
-                    if (c.G > 0.6 and c.R < 0.4) or (c.B > 0.7 and c.R < 0.3) then
-                        return true
-                    end
+                local oc = child.OutlineColor
+                local fc = child.FillColor
+                if oc and typeof(oc) == "Color3" and ((oc.G > 0.6 and oc.R < 0.4) or (oc.B > 0.7 and oc.R < 0.3)) then
+                    return true
+                end
+                if fc and typeof(fc) == "Color3" and ((fc.G > 0.6 and fc.R < 0.4) or (fc.B > 0.7 and fc.R < 0.3)) then
+                    return true
                 end
             end
         end
@@ -1087,36 +1126,81 @@ local function FindBestTarget()
     local crosshairPos = GetCrosshairPosition()
     local myChar = LocalPlayer.Character
     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return nil end -- Can't calculate distances without our own HRP
 
-    -- Sticky lock: keep tracking same character if still valid (prevents target-hopping jitter & losing aim when passing through)
-    if CurrentLockedTarget and CurrentLockedTarget.Parent then
-        local hum = CurrentLockedTarget:FindFirstChildOfClass("Humanoid")
-        local player = Players:GetPlayerFromCharacter(CurrentLockedTarget)
+    -- Helper: validate a character is a live, non-ignored, non-teammate enemy
+    local function IsValidEnemy(char)
+        if not char or not char.Parent then return false end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then return false end
+        local player = Players:GetPlayerFromCharacter(char) or Players:FindFirstChild(char.Name)
         if player then
             local ign = _G.IgnoredPlayers[player.Name] or _G.IgnoredPlayers[player.DisplayName] or _G.IgnoredPlayers[tostring(player.UserId)]
-            if not ign and not IsTeammate(player) and hum and hum.Health > 0 then
-                local hrp = CurrentLockedTarget:FindFirstChild("HumanoidRootPart") or CurrentLockedTarget:FindFirstChild("Torso")
-                if hrp then
-                    local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
-                    if dist3D <= _G.ESPRange then
-                        local head = CurrentLockedTarget:FindFirstChild("Head")
-                        if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
-                            if _G.NearMode then
-                                -- In Near Mode, keep lock even if target passes behind or through camera
-                                return CurrentLockedTarget
-                            else
-                                -- In FOV Mode, keep lock if target is on screen or within close distance
-                                local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-                                if onScreen then
-                                    local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
-                                    if d <= _G.AimFOV * 2.0 then
-                                        return CurrentLockedTarget
-                                    end
-                                elseif dist3D <= 10 then
-                                    -- Close-quarters pass-through exception for FOV mode
-                                    return CurrentLockedTarget
+            if ign then return false end
+        end
+        if IsTeammate(player, char) then return false end
+        return true
+    end
+
+    -- Helper: check if character has line of sight from camera
+    local function HasLineOfSight(char)
+        local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        local head = char:FindFirstChild("Head")
+        if hrp and IsPartVisible(hrp) then return true end
+        if head and IsPartVisible(head) then return true end
+        return false
+    end
+
+    -- Helper: get distance from myHRP to character
+    local function GetDist3D(char)
+        local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+        if not hrp then return math.huge end
+        return (hrp.Position - myHRP.Position).Magnitude
+    end
+
+    -- Sticky lock: keep tracking same character if still valid
+    if CurrentLockedTarget and CurrentLockedTarget.Parent and IsValidEnemy(CurrentLockedTarget) then
+        local dist3D = GetDist3D(CurrentLockedTarget)
+        if dist3D <= _G.ESPRange then
+            if _G.NearMode then
+                -- Near Mode sticky: keep lock BUT allow switch if a much closer enemy appeared (within 60% of current distance)
+                local hrp = CurrentLockedTarget:FindFirstChild("HumanoidRootPart") or CurrentLockedTarget:FindFirstChild("Torso") or CurrentLockedTarget:FindFirstChild("UpperTorso")
+                -- For close-range (< 30 studs) skip wall check since target may be just around corner
+                local hasLOS = (dist3D < 30) or HasLineOfSight(CurrentLockedTarget)
+                if hasLOS then
+                    -- Check if there's a significantly closer enemy
+                    local closerThreshold = dist3D * 0.6
+                    local foundCloser = false
+                    for _, p in pairs(Players:GetPlayers()) do
+                        if p ~= LocalPlayer then
+                            local char = p.Character
+                            if char and char ~= CurrentLockedTarget and IsValidEnemy(char) then
+                                local d = GetDist3D(char)
+                                if d < closerThreshold and HasLineOfSight(char) then
+                                    foundCloser = true
+                                    break
                                 end
                             end
+                        end
+                    end
+                    if not foundCloser then
+                        return CurrentLockedTarget
+                    end
+                end
+            else
+                -- FOV Mode sticky: keep lock if target is on screen within relaxed FOV
+                if HasLineOfSight(CurrentLockedTarget) then
+                    local hrp = CurrentLockedTarget:FindFirstChild("HumanoidRootPart") or CurrentLockedTarget:FindFirstChild("Torso") or CurrentLockedTarget:FindFirstChild("UpperTorso")
+                    if hrp then
+                        local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                        if onScreen then
+                            local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
+                            if d <= _G.AimFOV * 2.0 then
+                                return CurrentLockedTarget
+                            end
+                        elseif dist3D <= 10 then
+                            -- Close-quarters pass-through exception
+                            return CurrentLockedTarget
                         end
                     end
                 end
@@ -1128,62 +1212,45 @@ local function FindBestTarget()
     local bestChar = nil
 
     if _G.NearMode then
-        -- NEAR MODE: Find target closest by 3D world distance to local player (ignores FOV & screen bounds)
+        -- NEAR MODE: Find target closest by 3D world distance (ignores FOV & screen bounds)
         local bestDist3D = _G.ESPRange or 1000
 
         for _, p in pairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
                 local char = p.Character
-                if char then
-                    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-                    if hrp then
-                        local hum = char:FindFirstChildOfClass("Humanoid")
-                        if hum and hum.Health > 0 then
-                            local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
-                            if dist3D <= bestDist3D then
-                                local ign = _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName] or _G.IgnoredPlayers[tostring(p.UserId)]
-                                if not ign and not IsTeammate(p) then
-                                    local head = char:FindFirstChild("Head")
-                                    if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
-                                        bestDist3D = dist3D
-                                        bestChar = char
-                                    end
-                                end
-                            end
+                if char and IsValidEnemy(char) then
+                    local dist3D = GetDist3D(char)
+                    if dist3D < bestDist3D then
+                        -- For close range (< 30 studs), skip wall check to avoid losing targets around corners
+                        if dist3D < 30 or HasLineOfSight(char) then
+                            bestDist3D = dist3D
+                            bestChar = char
                         end
                     end
                 end
             end
         end
     else
-        -- FOV MODE: Find target closest by 2D screen distance to crosshair inside AimFOV
-        local isDotMode = (not _G.AutoAim) and _G.AutoShoot
-        local scaleFactor = math.clamp(Camera.ViewportSize.Y / 1080, 0.35, 1.0)
-        local effectiveFOV = (isDotMode and (UserInputService.TouchEnabled and 30 or 15) or _G.AimFOV) * scaleFactor
-        local bestDist2D = effectiveFOV
+        -- FOV MODE: Find target closest to crosshair within 2D screen FOV radius
+        local bestFOV = _G.AimFOV or 150
 
         for _, p in pairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
                 local char = p.Character
-                if char then
-                    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-                    if hrp then
-                        local hum = char:FindFirstChildOfClass("Humanoid")
-                        if hum and hum.Health > 0 then
-                            local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
-                            if dist3D <= _G.ESPRange then
-                                local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-                                if onScreen then
-                                    local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
-                                    if d < bestDist2D then
-                                        local ign = _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName] or _G.IgnoredPlayers[tostring(p.UserId)]
-                                        if not ign and not IsTeammate(p) then
-                                            local head = char:FindFirstChild("Head")
-                                            if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
-                                                bestDist2D = d
-                                                bestChar = char
-                                            end
-                                        end
+                if char and IsValidEnemy(char) then
+                    local dist3D = GetDist3D(char)
+                    if dist3D <= _G.ESPRange then
+                        local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+                        local head = char:FindFirstChild("Head")
+                        local checkPart = (CurrentAimIsHead and head) or hrp or head
+                        if checkPart then
+                            local screenPos, onScreen = Camera:WorldToViewportPoint(checkPart.Position)
+                            if onScreen then
+                                local dist2D = (Vector2.new(screenPos.X, screenPos.Y) - crosshairPos).Magnitude
+                                if dist2D <= bestFOV then
+                                    if HasLineOfSight(char) then
+                                        bestFOV = dist2D
+                                        bestChar = char
                                     end
                                 end
                             end
@@ -1205,7 +1272,6 @@ end
 
 local _smoothedCameraRotation = nil
 local _targetGraceTime = 0
-local _lastTargetChar = nil
 
 local function RunAutoAim(dt)
     if not _G.AutoAim then
@@ -1224,8 +1290,8 @@ local function RunAutoAim(dt)
     elseif _lastTargetChar and _lastTargetChar.Parent and (now - _targetGraceTime < 0.25) then
         -- 0.25s Grace period: maintain lock across minor 1-frame raycast/animation slips
         local hum = _lastTargetChar:FindFirstChildOfClass("Humanoid")
-        local p = Players:GetPlayerFromCharacter(_lastTargetChar)
-        if hum and hum.Health > 0 and (not p or not IsTeammate(p)) then
+        local p = Players:GetPlayerFromCharacter(_lastTargetChar) or Players:FindFirstChild(_lastTargetChar.Name)
+        if hum and hum.Health > 0 and not IsTeammate(p, _lastTargetChar) then
             targetChar = _lastTargetChar
         else
             _lastTargetChar = nil
@@ -1240,7 +1306,7 @@ local function RunAutoAim(dt)
         return
     end
 
-    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso")
+    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("UpperTorso")
     if not hrp then return end
 
     -- Stable aim point: HumanoidRootPart position + fixed Y offset (no animation jitter)
@@ -1292,21 +1358,69 @@ local function RunAutoShoot()
     end
     if not targetChar or not targetChar.Parent then return end
 
-    -- On-target alignment check: only shoot once the camera has arrived / locked on target
-    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso")
+    -- Verify target is an enemy and alive
+    local hum = targetChar:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    local p = Players:GetPlayerFromCharacter(targetChar) or Players:FindFirstChild(targetChar.Name)
+    if IsTeammate(p, targetChar) then return end
+
+    -- Instant Wall Check Guard: Never shoot if target is behind a wall or obstacle!
+    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso") or targetChar:FindFirstChild("UpperTorso")
     local head = targetChar:FindFirstChild("Head")
-    local checkPart = head or hrp
+    local checkPart = (CurrentAimIsHead and head) or hrp or head
     if not checkPart then return end
 
-    local screenPos, onScreen = Camera:WorldToViewportPoint(checkPart.Position)
-    if not onScreen then return end
+    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local targetDist3D = (myHRP and hrp) and (hrp.Position - myHRP.Position).Magnitude or 999
 
+    if _G.AimWallCheck then
+        -- Near Mode relaxes wall check for close-range targets (< 30 studs)
+        local isClose = _G.NearMode and targetDist3D < 30
+        if not isClose and not (IsPartVisible(checkPart) or (head and IsPartVisible(head)) or (hrp and IsPartVisible(hrp))) then
+            return -- Target is behind a wall!
+        end
+    end
+
+    -- Check all body parts to determine if crosshair is aligned with enemy
     local crosshair = GetCrosshairPosition()
-    local distToCrosshair = (Vector2.new(screenPos.X, screenPos.Y) - crosshair).Magnitude
-    -- Allow shooting only when crosshair is within on-target tolerance (e.g. 35px or proportional)
-    local maxShootSpread = math.clamp(35 * (Camera.ViewportSize.Y / 1080), 18, 40)
-    if distToCrosshair > maxShootSpread then
-        return -- Camera still traveling toward target, wait until locked on!
+    local minPartDist = 99999
+    local anyOnScreen = false
+
+    local checkParts = {"Head", "HumanoidRootPart", "Torso", "UpperTorso", "LowerTorso"}
+    for _, partName in ipairs(checkParts) do
+        local part = targetChar:FindFirstChild(partName)
+        if part then
+            local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+            if onScreen then
+                anyOnScreen = true
+                local d = (Vector2.new(sp.X, sp.Y) - crosshair).Magnitude
+                if d < minPartDist then
+                    minPartDist = d
+                end
+            end
+        end
+    end
+
+    -- In Near Mode, camera is forced to track the target, so if nothing is on screen yet
+    -- it's likely a 1-frame delay — allow firing for close targets
+    if not anyOnScreen then
+        if _G.NearMode and targetDist3D < 30 then
+            minPartDist = 0 -- Trust camera tracking, allow shot
+        else
+            return
+        end
+    end
+
+    -- Alignment threshold: Near Mode snaps camera directly so use tight tolerance
+    -- SmoothAim needs wider tolerance since camera is still gliding
+    local maxAllowedDist
+    if _G.NearMode then
+        maxAllowedDist = _G.SmoothAim and math.clamp(120 * (Camera.ViewportSize.Y / 1080), 60, 150) or 200
+    else
+        maxAllowedDist = _G.SmoothAim and math.clamp(80 * (Camera.ViewportSize.Y / 1080), 40, 100) or math.max(_G.AimFOV or 150, 100)
+    end
+    if minPartDist > maxAllowedDist then
+        return
     end
 
     local now = tick()
@@ -1316,7 +1430,7 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- 1. Fire tool natively via Roblox API (Primary: zero camera interference)
+    -- 1. Fire tool natively via Roblox API (if standard tool exists)
     local toolFired = false
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
@@ -1338,7 +1452,7 @@ local function RunAutoShoot()
         end)
     end
 
-    -- 2. Input-specific firing method (Fallback only if tool did not fire):
+    -- 2. Input-specific firing method (for games like Rivals that use input controllers):
     if not toolFired then
         pcall(function()
             if UserInputService.TouchEnabled then
@@ -1351,7 +1465,6 @@ local function RunAutoShoot()
                     posX, posY = centerPos.X, centerPos.Y
                 end
 
-                -- Helper: fire a single connection with args (Delta uses conn.Function, others use conn:Fire)
                 local function fireConn(conn, ...)
                     local args = {...}
                     pcall(function()
@@ -1366,7 +1479,6 @@ local function RunAutoShoot()
                     end)
                 end
 
-                -- Fire InputBegan with both MouseButton1 AND Touch (games check either one)
                 local fakeMouseDown = {
                     UserInputType = Enum.UserInputType.MouseButton1,
                     UserInputState = Enum.UserInputState.Begin,
@@ -1416,18 +1528,28 @@ local function RunAutoShoot()
                     end
                 end)
             else
-                -- PC: Fallback mouse click simulation
+                -- PC: Universal Mouse Click & Virtual Input Simulation
+                local vp = Camera.ViewportSize
                 if mouse1click then
                     mouse1click()
                 elseif mouse1press then
                     mouse1press()
                     task.delay(0.02, function() pcall(mouse1release) end)
                 else
-                    local vp = Camera.ViewportSize
-                    VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-                    task.delay(0.02, function()
-                        pcall(function()
-                            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+                    pcall(function()
+                        local VU = game:GetService("VirtualUser")
+                        VU:CaptureController()
+                        VU:Button1Down(Vector2.new(vp.X / 2, vp.Y / 2))
+                        task.delay(0.02, function()
+                            pcall(function() VU:Button1Up(Vector2.new(vp.X / 2, vp.Y / 2)) end)
+                        end)
+                    end)
+                    pcall(function()
+                        VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+                        task.delay(0.02, function()
+                            pcall(function()
+                                VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+                            end)
                         end)
                     end)
                 end
@@ -1555,7 +1677,7 @@ local function RefreshAllESP()
             local theirChar = p.Character
             if theirChar then
                 local theirHRP = theirChar:FindFirstChild("HumanoidRootPart") or theirChar:FindFirstChild("Torso")
-                if theirHRP and (theirHRP.Position - myHRP.Position).Magnitude <= _G.ESPRange and IsPlayerOccluded(theirChar) then
+                if theirHRP and (theirHRP.Position - myHRP.Position).Magnitude <= _G.ESPRange then
                     SetESPState(p, true)
                 else
                     SetESPState(p, false)
@@ -1885,7 +2007,7 @@ do
     FreeCamBtn.MouseButton1Click:Connect(function()
         _G.FreeCam = not _G.FreeCam
         UpdateFreeCam(_G.FreeCam)
-        ToggleFreeCam(_G.FreeCam)
+        ToggleFreeCam()
     end)
     SafeBtn.MouseButton1Click:Connect(function() _G.SafeMode = not _G.SafeMode; UpdateSafe(_G.SafeMode); SaveConfig() end)
 
@@ -2031,7 +2153,15 @@ do
     end)
 
     IgnoreBtn.MouseButton1Click:Connect(function()
-        -- Add target ignore logic if needed
+        if CurrentLockedTarget then
+            local targetPlayer = Players:GetPlayerFromCharacter(CurrentLockedTarget) or Players:FindFirstChild(CurrentLockedTarget.Name)
+            if targetPlayer then
+                _G.IgnoredPlayers[targetPlayer.Name] = true
+                _G.IgnoredPlayers[targetPlayer.DisplayName] = true
+                CurrentLockedTarget = nil
+                _lastTargetChar = nil
+            end
+        end
     end)
 
     -- 10. Players Online List
@@ -2112,11 +2242,33 @@ do
                 ignBtn.Position = UDim2.new(1, -60, 0, 5)
                 ignBtn.Size = UDim2.new(0, 50, 0, 20)
                 ignBtn.Font = Enum.Font.GothamBold
-                ignBtn.Text = "Ignore"
                 ignBtn.TextColor3 = Theme.Danger
                 ignBtn.TextSize = 10
                 ignBtn.Parent = item
                 ApplyCorner(ignBtn, 4)
+
+                local isIgnored = _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName]
+                ignBtn.Text = isIgnored and "Unignore" or "Ignore"
+                if isIgnored then
+                    ignBtn.BackgroundColor3 = Theme.Danger
+                    ignBtn.TextColor3 = Theme.Text
+                end
+
+                ignBtn.MouseButton1Click:Connect(function()
+                    if _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName] then
+                        _G.IgnoredPlayers[p.Name] = nil
+                        _G.IgnoredPlayers[p.DisplayName] = nil
+                        ignBtn.Text = "Ignore"
+                        ignBtn.BackgroundColor3 = Theme.Surface
+                        ignBtn.TextColor3 = Theme.Danger
+                    else
+                        _G.IgnoredPlayers[p.Name] = true
+                        _G.IgnoredPlayers[p.DisplayName] = true
+                        ignBtn.Text = "Unignore"
+                        ignBtn.BackgroundColor3 = Theme.Danger
+                        ignBtn.TextColor3 = Theme.Text
+                    end
+                end)
             end
         end
         PlayerCount.Text = tostring(count) .. "/" .. tostring(#Players:GetPlayers())
