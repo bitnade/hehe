@@ -112,6 +112,7 @@ pcall(function()
         NearMode = _G.NearMode,
         TeamCheck = _G.TeamCheck,
         AutoShoot = _G.AutoShoot,
+        EspEnabled = _G.EspEnabled,
         ESPRange = _G.ESPRange,
         ReachDistance = _G.ReachDistance,
         KillAuraRange = _G.KillAuraRange,
@@ -136,6 +137,7 @@ pcall(function()
         if data.NearMode ~= nil then _G.NearMode = data.NearMode end
         if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
         if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
+        if data.EspEnabled ~= nil then _G.EspEnabled = data.EspEnabled end
         if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
         if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
         if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
@@ -1785,7 +1787,7 @@ do
     local NearModeBtn,  UpdateNearMode        = CreateToggleButton("Near Mode",    "📍", _G.NearMode or false)
     local TeamCheckBtn, UpdateTeamCheck       = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
     local FOVBtn,       UpdateShowFOV         = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
-    local EspBtn,       UpdateEsp             = CreateToggleButton("ESP",          "👁", false)
+    local EspBtn,       UpdateEsp             = CreateToggleButton("ESP",          "👁", _G.EspEnabled or false)
     local BrightBtn,    UpdateBright          = CreateToggleButton("FullBright",   "☀️", false)
     local NoclipBtn,    UpdateNoclip          = CreateToggleButton("Noclip",       "👻", false)
     local FlyBtn,       UpdateFly             = CreateToggleButton("Fly",          "🚀", false)
@@ -1802,7 +1804,7 @@ do
     NearModeBtn.MouseButton1Click:Connect(function() _G.NearMode = not _G.NearMode; UpdateNearMode(_G.NearMode); UpdateFOVCircle(); SaveConfig() end)
     TeamCheckBtn.MouseButton1Click:Connect(function() _G.TeamCheck = not _G.TeamCheck; UpdateTeamCheck(_G.TeamCheck); SaveConfig() end)
     FOVBtn.MouseButton1Click:Connect(function() _G.ShowFOV = not _G.ShowFOV; UpdateShowFOV(_G.ShowFOV); SaveConfig() end)
-    EspBtn.MouseButton1Click:Connect(function() _G.EspEnabled = not _G.EspEnabled; UpdateEsp(_G.EspEnabled); RefreshAllESP() end)
+    EspBtn.MouseButton1Click:Connect(function() _G.EspEnabled = not _G.EspEnabled; UpdateEsp(_G.EspEnabled); RefreshAllESP(); SaveConfig() end)
     BrightBtn.MouseButton1Click:Connect(function() _G.FullBright = not _G.FullBright; UpdateBright(_G.FullBright); if not _G.FullBright then RestoreLighting() end end)
     NoclipBtn.MouseButton1Click:Connect(function() _G.Noclip = not _G.Noclip; UpdateNoclip(_G.Noclip) end)
     FlyBtn.MouseButton1Click:Connect(function()
