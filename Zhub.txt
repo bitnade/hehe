@@ -81,11 +81,12 @@ _G.KillAura = false
 _G.AutoAim = false
 _G.ShowFOV = true
 _G.AimFOV = 150
-_G.AimSmoothness = 0.25
+_G.AimSmoothness = 0.15
 _G.AimPart = "Head"
 _G.AimWallCheck = true
 _G.HeadshotChance = 0.40
-_G.SmoothAim = false  -- false = Direct Aim (snap), true = Smooth Aim (lerp)
+_G.SmoothAim = false  -- false = Direct Aim (default), true = Smooth Aim (natural glide)
+_G.NearMode = false   -- true = target closest enemy by 3D world distance (skips FOV check)
 _G.TeamCheck = true   -- true = skip teammates in auto aim
 _G.AutoShoot = false  -- true = automatically fire at locked/valid target
 _G.MovementSpeed, _G.SafeMode, _G.TimeScale = 50, true, 1
@@ -108,9 +109,10 @@ pcall(function()
         AimSmoothness = _G.AimSmoothness,
         HeadshotChance = _G.HeadshotChance,
         SmoothAim = _G.SmoothAim,
+        NearMode = _G.NearMode,
         TeamCheck = _G.TeamCheck,
         AutoShoot = _G.AutoShoot,
-                        ESPRange = _G.ESPRange,
+        ESPRange = _G.ESPRange,
         ReachDistance = _G.ReachDistance,
         KillAuraRange = _G.KillAuraRange,
         MovementSpeed = _G.MovementSpeed
@@ -131,9 +133,10 @@ pcall(function()
         if data.AimSmoothness ~= nil then _G.AimSmoothness = data.AimSmoothness end
         if data.HeadshotChance ~= nil then _G.HeadshotChance = data.HeadshotChance end
         if data.SmoothAim ~= nil then _G.SmoothAim = data.SmoothAim end
+        if data.NearMode ~= nil then _G.NearMode = data.NearMode end
         if data.TeamCheck ~= nil then _G.TeamCheck = data.TeamCheck end
         if data.AutoShoot ~= nil then _G.AutoShoot = data.AutoShoot end
-                        if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
+        if data.ESPRange ~= nil then _G.ESPRange = data.ESPRange end
         if data.ReachDistance ~= nil then _G.ReachDistance = data.ReachDistance end
         if data.KillAuraRange ~= nil then _G.KillAuraRange = data.KillAuraRange end
         if data.MovementSpeed ~= nil then _G.MovementSpeed = data.MovementSpeed end
@@ -778,23 +781,67 @@ local function ToggleAutoAim(forcedState)
     else
         _G.AutoAim = not _G.AutoAim
     end
+    if not _G.AutoAim then
+        CurrentLockedTarget = nil
+    end
     if _updateAutoAimFunc then
-        _updateAutoAimFunc(_G.AutoAim)
+        pcall(function() _updateAutoAimFunc(_G.AutoAim) end)
+    end
+    if UpdateFOVCircle then
+        pcall(UpdateFOVCircle)
     end
     SaveConfig()
 end
 
 local _autoAimDebounce = false
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    if UserInputService:GetFocusedTextBox() ~= nil then return end
+local function HandleToggleAutoAimKey()
+    if _autoAimDebounce then return end
+    _autoAimDebounce = true
+    ToggleAutoAim()
+    task.delay(0.12, function()
+        _autoAimDebounce = false
+    end)
+end
 
+-- 1. ContextActionService Binding (Highest priority input sink in Roblox)
+local ContextActionService = game:GetService("ContextActionService")
+pcall(function()
+    ContextActionService:UnbindAction("ZHub_ToggleAutoAim")
+    ContextActionService:BindActionAtPriority(
+        "ZHub_ToggleAutoAim",
+        function(actionName, inputState, inputObject)
+            if inputState == Enum.UserInputState.Begin then
+                local focused = UserInputService:GetFocusedTextBox()
+                if focused and focused:IsA("TextBox") then return Enum.ContextActionResult.Pass end
+                HandleToggleAutoAimKey()
+                return Enum.ContextActionResult.Sink
+            end
+            return Enum.ContextActionResult.Pass
+        end,
+        false,
+        Enum.ContextActionPriority.High.Value,
+        Enum.KeyCode.T
+    )
+end)
+
+-- 2. UserInputService InputBegan Fallback
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.KeyCode == Enum.KeyCode.T then
-        if _autoAimDebounce then return end
-        _autoAimDebounce = true
-        ToggleAutoAim()
-        task.delay(0.15, function()
-            _autoAimDebounce = false
+        local focused = UserInputService:GetFocusedTextBox()
+        if focused and focused:IsA("TextBox") then return end
+        HandleToggleAutoAimKey()
+    end
+end)
+
+-- 3. Mouse.KeyDown Fallback
+pcall(function()
+    if Mouse and Mouse.KeyDown then
+        Mouse.KeyDown:Connect(function(key)
+            if key and string.lower(key) == "t" then
+                local focused = UserInputService:GetFocusedTextBox()
+                if focused and focused:IsA("TextBox") then return end
+                HandleToggleAutoAimKey()
+            end
         end)
     end
 end)
@@ -858,7 +905,7 @@ do
     end
 
     function UpdateFOVCircle()
-        local shouldShow = (_G.ShowFOV == true)
+        local shouldShow = (_G.ShowFOV == true) and (not _G.NearMode)
 
         if not shouldShow then
             if FOVCircle then pcall(function() FOVCircle.Visible = false end) end
@@ -901,7 +948,7 @@ local function IsPartVisible(targetPart)
 
     local origin = Camera.CFrame.Position
     local direction = targetPart.Position - origin
-    if direction.Magnitude < 0.5 then return true end
+    if direction.Magnitude < 4.0 then return true end
 
     -- Build exclude list once
     AimRayParams.FilterDescendantsInstances = {myChar, targetPart.Parent}
@@ -930,18 +977,66 @@ local function IsTeammate(player)
     if not _G.TeamCheck then return false end
     if not player or player == LocalPlayer then return false end
 
-    -- Team check: same team = teammate
-    if LocalPlayer.Team and player.Team and LocalPlayer.Team == player.Team then
-    -- Both neutral means no team system, don't skip
-    if not (LocalPlayer.Neutral and player.Neutral) then
+    local myChar = LocalPlayer.Character
+    local char = player.Character
+
+    -- ForceField check: player has spawn protection / invincibility
+    if char and char:FindFirstChildOfClass("ForceField") then
         return true
     end
+
+    -- 1. Native Roblox Team instance check
+    if LocalPlayer.Team and player.Team and LocalPlayer.Team == player.Team then
+        if not (LocalPlayer.Neutral and player.Neutral) then
+            return true
+        end
     end
 
-    -- ForceField check: player has spawn protection
-    local char = player.Character
-    if char and char:FindFirstChildOfClass("ForceField") then
-    return true
+    -- 2. TeamColor check (many games set TeamColor without Team instances)
+    if LocalPlayer.TeamColor and player.TeamColor and LocalPlayer.TeamColor == player.TeamColor then
+        local colName = LocalPlayer.TeamColor.Name
+        if colName ~= "White" and colName ~= "Medium stone grey" then
+            if not (LocalPlayer.Neutral and player.Neutral) then
+                return true
+            end
+        end
+    end
+
+    -- 3. Custom Attributes (e.g. "Team", "TeamName", "Squad", "Faction", "Side", "Clan", "Party")
+    local teamKeys = {"Team", "team", "TeamName", "Squad", "Faction", "Side", "Clan", "Party"}
+    for _, key in ipairs(teamKeys) do
+        local myAttr = LocalPlayer:GetAttribute(key) or (myChar and myChar:GetAttribute(key))
+        local targetAttr = player:GetAttribute(key) or (char and char:GetAttribute(key))
+        if myAttr ~= nil and targetAttr ~= nil and myAttr == targetAttr and tostring(myAttr) ~= "" and tostring(myAttr) ~= "None" and tostring(myAttr) ~= "Neutral" then
+            return true
+        end
+    end
+
+    -- 4. Custom ValueObjects in Player / Character / leaderstats
+    local function GetTeamValue(parent)
+        if not parent then return nil end
+        for _, key in ipairs(teamKeys) do
+            local valObj = parent:FindFirstChild(key)
+            if valObj and valObj:IsA("ValueBase") then
+                return valObj.Value
+            end
+        end
+        local ls = parent:FindFirstChild("leaderstats")
+        if ls then
+            for _, key in ipairs(teamKeys) do
+                local valObj = ls:FindFirstChild(key)
+                if valObj and valObj:IsA("ValueBase") then
+                    return valObj.Value
+                end
+            end
+        end
+        return nil
+    end
+
+    local myVal = GetTeamValue(LocalPlayer) or GetTeamValue(myChar)
+    local targetVal = GetTeamValue(player) or GetTeamValue(char)
+    if myVal ~= nil and targetVal ~= nil and myVal == targetVal and tostring(myVal) ~= "" and tostring(myVal) ~= "None" and tostring(myVal) ~= "Neutral" then
+        return true
     end
 
     return false
@@ -952,23 +1047,34 @@ local function FindBestTarget()
     local myChar = LocalPlayer.Character
     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-    -- Sticky lock: keep tracking same character if still valid (prevents target-hopping jitter)
+    -- Sticky lock: keep tracking same character if still valid (prevents target-hopping jitter & losing aim when passing through)
     if CurrentLockedTarget and CurrentLockedTarget.Parent then
-    local hum = CurrentLockedTarget:FindFirstChildOfClass("Humanoid")
-    local player = Players:GetPlayerFromCharacter(CurrentLockedTarget)
-    if player then
-        local ign = _G.IgnoredPlayers[player.Name] or _G.IgnoredPlayers[player.DisplayName] or _G.IgnoredPlayers[tostring(player.UserId)]
-        if not ign and not IsTeammate(player) and hum and hum.Health > 0 then
-            local hrp = CurrentLockedTarget:FindFirstChild("HumanoidRootPart") or CurrentLockedTarget:FindFirstChild("Torso")
-            if hrp then
-                if myHRP and (hrp.Position - myHRP.Position).Magnitude <= _G.ESPRange then
-                    local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-                    if onScreen then
-                        local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
-                        if d <= _G.AimFOV * 1.5 then
-                            local head = CurrentLockedTarget:FindFirstChild("Head")
-                            if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
+        local hum = CurrentLockedTarget:FindFirstChildOfClass("Humanoid")
+        local player = Players:GetPlayerFromCharacter(CurrentLockedTarget)
+        if player then
+            local ign = _G.IgnoredPlayers[player.Name] or _G.IgnoredPlayers[player.DisplayName] or _G.IgnoredPlayers[tostring(player.UserId)]
+            if not ign and not IsTeammate(player) and hum and hum.Health > 0 then
+                local hrp = CurrentLockedTarget:FindFirstChild("HumanoidRootPart") or CurrentLockedTarget:FindFirstChild("Torso")
+                if hrp then
+                    local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
+                    if dist3D <= _G.ESPRange then
+                        local head = CurrentLockedTarget:FindFirstChild("Head")
+                        if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
+                            if _G.NearMode then
+                                -- In Near Mode, keep lock even if target passes behind or through camera
                                 return CurrentLockedTarget
+                            else
+                                -- In FOV Mode, keep lock if target is on screen or within close distance
+                                local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                                if onScreen then
+                                    local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
+                                    if d <= _G.AimFOV * 2.0 then
+                                        return CurrentLockedTarget
+                                    end
+                                elseif dist3D <= 10 then
+                                    -- Close-quarters pass-through exception for FOV mode
+                                    return CurrentLockedTarget
+                                end
                             end
                         end
                     end
@@ -976,39 +1082,29 @@ local function FindBestTarget()
             end
         end
     end
-    end
 
-    -- Find new closest target (FAST FILTER FIRST: screen position & FOV distance -> SLOW CHECK: Raycast)
-    local isDotMode = (not _G.AutoAim) and _G.AutoShoot
-    local scaleFactor = math.clamp(Camera.ViewportSize.Y / 1080, 0.35, 1.0)
-    local effectiveFOV = (isDotMode and (UserInputService.TouchEnabled and 30 or 15) or _G.AimFOV) * scaleFactor
-
+    -- Find new closest target
     local bestChar = nil
-    local bestDist = effectiveFOV
 
-    for _, p in pairs(Players:GetPlayers()) do
-    if p ~= LocalPlayer then
-        local char = p.Character
-        if char then
-            local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-            if hrp then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
-                    if dist3D <= _G.ESPRange then
-                        -- Fast Check 1: Is player on screen?
-                        local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
-                        if onScreen then
-                            -- Fast Check 2: Is 2D distance to crosshair closer than bestDist?
-                            local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
-                            if d < bestDist then
-                                -- Fast Check 3: Is player ignored or teammate?
+    if _G.NearMode then
+        -- NEAR MODE: Find target closest by 3D world distance to local player (ignores FOV & screen bounds)
+        local bestDist3D = _G.ESPRange or 1000
+
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local char = p.Character
+                if char then
+                    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+                    if hrp then
+                        local hum = char:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
+                            if dist3D <= bestDist3D then
                                 local ign = _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName] or _G.IgnoredPlayers[tostring(p.UserId)]
                                 if not ign and not IsTeammate(p) then
-                                    -- Slow Check 4: Wall check raycast ONLY for the 1 candidate inside FOV!
                                     local head = char:FindFirstChild("Head")
                                     if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
-                                        bestDist = d
+                                        bestDist3D = dist3D
                                         bestChar = char
                                     end
                                 end
@@ -1018,29 +1114,88 @@ local function FindBestTarget()
                 end
             end
         end
-    end
+    else
+        -- FOV MODE: Find target closest by 2D screen distance to crosshair inside AimFOV
+        local isDotMode = (not _G.AutoAim) and _G.AutoShoot
+        local scaleFactor = math.clamp(Camera.ViewportSize.Y / 1080, 0.35, 1.0)
+        local effectiveFOV = (isDotMode and (UserInputService.TouchEnabled and 30 or 15) or _G.AimFOV) * scaleFactor
+        local bestDist2D = effectiveFOV
+
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local char = p.Character
+                if char then
+                    local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+                    if hrp then
+                        local hum = char:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            local dist3D = myHRP and (hrp.Position - myHRP.Position).Magnitude or 0
+                            if dist3D <= _G.ESPRange then
+                                local sp, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                                if onScreen then
+                                    local d = (Vector2.new(sp.X, sp.Y) - crosshairPos).Magnitude
+                                    if d < bestDist2D then
+                                        local ign = _G.IgnoredPlayers[p.Name] or _G.IgnoredPlayers[p.DisplayName] or _G.IgnoredPlayers[tostring(p.UserId)]
+                                        if not ign and not IsTeammate(p) then
+                                            local head = char:FindFirstChild("Head")
+                                            if IsPartVisible(hrp) or (head and IsPartVisible(head)) then
+                                                bestDist2D = d
+                                                bestChar = char
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 
     -- New target acquired — roll headshot chance once per engagement
     if bestChar ~= CurrentLockedTarget then
-    CurrentLockedTarget = bestChar
-    CurrentAimIsHead = bestChar and (math.random() <= (_G.HeadshotChance or 0.40))
+        CurrentLockedTarget = bestChar
+        CurrentAimIsHead = bestChar and (math.random() <= (_G.HeadshotChance or 0.40))
     end
 
     return bestChar
 end
 
--- [[ CAMERA TRACKING ]] --
+local _smoothedCameraRotation = nil
+local _targetGraceTime = 0
+local _lastTargetChar = nil
+
 local function RunAutoAim(dt)
     if not _G.AutoAim then
-    CurrentLockedTarget = nil
-    return
+        CurrentLockedTarget = nil
+        _lastTargetChar = nil
+        _smoothedCameraRotation = nil
+        return
     end
 
     local targetChar = FindBestTarget()
+    local now = tick()
+
+    if targetChar then
+        _lastTargetChar = targetChar
+        _targetGraceTime = now
+    elseif _lastTargetChar and _lastTargetChar.Parent and (now - _targetGraceTime < 0.25) then
+        -- 0.25s Grace period: maintain lock across minor 1-frame raycast/animation slips
+        local hum = _lastTargetChar:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then
+            targetChar = _lastTargetChar
+        else
+            _lastTargetChar = nil
+        end
+    else
+        _lastTargetChar = nil
+    end
+
     if not targetChar then
-    CurrentLockedTarget = nil
-    return
+        CurrentLockedTarget = nil
+        _smoothedCameraRotation = nil
+        return
     end
 
     local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso")
@@ -1050,22 +1205,32 @@ local function RunAutoAim(dt)
     local yOffset = CurrentAimIsHead and 1.5 or 0
     local aimPoint = hrp.Position + Vector3.new(0, yOffset, 0)
 
-    -- Gentle velocity lead (only horizontal, avoids vertical overshoot from jumping)
+    -- Gentle velocity lead (horizontal only, prevents vertical jumping jitter)
     local vel = Vector3.new()
     pcall(function()
-    local v = hrp.AssemblyLinearVelocity or hrp.Velocity
-    if v then vel = Vector3.new(v.X, 0, v.Z) end
+        local v = hrp.AssemblyLinearVelocity or hrp.Velocity
+        if v then vel = Vector3.new(v.X, 0, v.Z) end
     end)
-    aimPoint = aimPoint + vel * 0.02
+    aimPoint = aimPoint + vel * 0.015
+
+    local targetCFrame = CFrame.new(Camera.CFrame.Position, aimPoint)
 
     if _G.SmoothAim then
-    -- Smooth Aim: lerp the camera towards the target using AimSmoothness
-    local targetCFrame = CFrame.new(Camera.CFrame.Position, aimPoint)
-    local alpha = math.clamp(_G.AimSmoothness * (dt * 60), 0, 1)
-    Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, alpha)
+        -- Initialize smoothed rotation on target acquisition to current camera view
+        if not _smoothedCameraRotation then
+            _smoothedCameraRotation = Camera.CFrame.Rotation
+        end
+
+        local smoothVal = math.clamp(_G.AimSmoothness or 0.15, 0.01, 1.0)
+        local alpha = math.clamp(smoothVal * math.clamp(dt * 60, 0.5, 2.0), 0.02, 0.35)
+        _smoothedCameraRotation = _smoothedCameraRotation:Lerp(targetCFrame.Rotation, alpha)
+
+        -- Apply persistent smoothly-interpolated rotation at current physical camera position
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position) * _smoothedCameraRotation
     else
-    -- Direct Aim: snap camera directly to target every frame (instant lock)
-    Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPoint)
+        _smoothedCameraRotation = nil
+        -- Direct Aim: snap camera directly to target
+        Camera.CFrame = targetCFrame
     end
 end
 
@@ -1079,11 +1244,28 @@ local function RunAutoShoot()
     if not _G.AutoShoot then return end
     if not _G.AutoAim then return end
 
-    local targetChar = CurrentLockedTarget
+    local targetChar = CurrentLockedTarget or _lastTargetChar
     if not targetChar or not targetChar.Parent then
         targetChar = FindBestTarget()
     end
     if not targetChar or not targetChar.Parent then return end
+
+    -- On-target alignment check: only shoot once the camera has arrived / locked on target
+    local hrp = targetChar:FindFirstChild("HumanoidRootPart") or targetChar:FindFirstChild("Torso")
+    local head = targetChar:FindFirstChild("Head")
+    local checkPart = head or hrp
+    if not checkPart then return end
+
+    local screenPos, onScreen = Camera:WorldToViewportPoint(checkPart.Position)
+    if not onScreen then return end
+
+    local crosshair = GetCrosshairPosition()
+    local distToCrosshair = (Vector2.new(screenPos.X, screenPos.Y) - crosshair).Magnitude
+    -- Allow shooting only when crosshair is within on-target tolerance (e.g. 35px or proportional)
+    local maxShootSpread = math.clamp(35 * (Camera.ViewportSize.Y / 1080), 18, 40)
+    if distToCrosshair > maxShootSpread then
+        return -- Camera still traveling toward target, wait until locked on!
+    end
 
     local now = tick()
     if (now - _lastShootTime) < AUTO_SHOOT_RATE then return end
@@ -1092,10 +1274,14 @@ local function RunAutoShoot()
     local char = LocalPlayer.Character
     if not char then return end
 
-    -- 1. Fire tool natively via Roblox API
+    -- 1. Fire tool natively via Roblox API (Primary: zero camera interference)
+    local toolFired = false
     local tool = char:FindFirstChildOfClass("Tool")
     if tool then
-        pcall(function() tool:Activate() end)
+        pcall(function()
+            tool:Activate()
+            toolFired = true
+        end)
 
         pcall(function()
             for _, child in ipairs(tool:GetDescendants()) do
@@ -1103,106 +1289,109 @@ local function RunAutoShoot()
                     local lname = string.lower(child.Name)
                     if lname:find("shoot") or lname:find("fire") or lname:find("remote") or lname:find("gun") or lname:find("action") or lname:find("bullet") or lname:find("attack") or lname:find("damage") then
                         pcall(function() child:FireServer() end)
+                        toolFired = true
                     end
                 end
             end
         end)
     end
 
-    -- 2. Input-specific firing method:
-    pcall(function()
-        if UserInputService.TouchEnabled then
-            -- MOBILE (Delta executor compatible): Fire game's input connections directly
-            local vp = Camera.ViewportSize
-            local posX, posY = vp.X / 2, vp.Y / 2
+    -- 2. Input-specific firing method (Fallback only if tool did not fire):
+    if not toolFired then
+        pcall(function()
+            if UserInputService.TouchEnabled then
+                -- MOBILE (Delta executor compatible): Fire game's input connections directly
+                local vp = Camera.ViewportSize
+                local posX, posY = vp.X / 2, vp.Y / 2
 
-            if ShootTargetWidget and ShootTargetWidget.Parent and ShootTargetWidget.Visible then
-                local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
-                posX, posY = centerPos.X, centerPos.Y
-            end
+                if ShootTargetWidget and ShootTargetWidget.Parent and ShootTargetWidget.Visible then
+                    local centerPos = ShootTargetWidget.AbsolutePosition + (ShootTargetWidget.AbsoluteSize / 2)
+                    posX, posY = centerPos.X, centerPos.Y
+                end
 
-            -- Helper: fire a single connection with args (Delta uses conn.Function, others use conn:Fire)
-            local function fireConn(conn, ...)
-                local args = {...}
+                -- Helper: fire a single connection with args (Delta uses conn.Function, others use conn:Fire)
+                local function fireConn(conn, ...)
+                    local args = {...}
+                    pcall(function()
+                        if conn.Function then
+                            conn.Function(unpack(args))
+                        end
+                    end)
+                    pcall(function()
+                        if conn.Fire then
+                            conn:Fire(unpack(args))
+                        end
+                    end)
+                end
+
+                -- Fire InputBegan with both MouseButton1 AND Touch (games check either one)
+                local fakeMouseDown = {
+                    UserInputType = Enum.UserInputType.MouseButton1,
+                    UserInputState = Enum.UserInputState.Begin,
+                    Position = Vector3.new(posX, posY, 0),
+                    Delta = Vector3.new(0, 0, 0),
+                    KeyCode = Enum.KeyCode.Unknown
+                }
+                local fakeTouchDown = {
+                    UserInputType = Enum.UserInputType.Touch,
+                    UserInputState = Enum.UserInputState.Begin,
+                    Position = Vector3.new(posX, posY, 0),
+                    Delta = Vector3.new(0, 0, 0),
+                    KeyCode = Enum.KeyCode.Unknown
+                }
+                local fakeMouseUp = {
+                    UserInputType = Enum.UserInputType.MouseButton1,
+                    UserInputState = Enum.UserInputState.End,
+                    Position = Vector3.new(posX, posY, 0),
+                    Delta = Vector3.new(0, 0, 0),
+                    KeyCode = Enum.KeyCode.Unknown
+                }
+                local fakeTouchUp = {
+                    UserInputType = Enum.UserInputType.Touch,
+                    UserInputState = Enum.UserInputState.End,
+                    Position = Vector3.new(posX, posY, 0),
+                    Delta = Vector3.new(0, 0, 0),
+                    KeyCode = Enum.KeyCode.Unknown
+                }
+
                 pcall(function()
-                    if conn.Function then
-                        conn.Function(unpack(args))
+                    if getconnections then
+                        local conns = getconnections(UserInputService.InputBegan)
+                        for i = 1, #conns do
+                            fireConn(conns[i], fakeMouseDown, false)
+                            fireConn(conns[i], fakeTouchDown, false)
+                        end
+
+                        task.delay(0.02, function()
+                            pcall(function()
+                                local endConns = getconnections(UserInputService.InputEnded)
+                                for i = 1, #endConns do
+                                    fireConn(endConns[i], fakeMouseUp, false)
+                                    fireConn(endConns[i], fakeTouchUp, false)
+                                end
+                            end)
+                        end)
                     end
                 end)
-                pcall(function()
-                    if conn.Fire then
-                        conn:Fire(unpack(args))
-                    end
-                end)
-            end
-
-            -- Fire InputBegan with both MouseButton1 AND Touch (games check either one)
-            local fakeMouseDown = {
-                UserInputType = Enum.UserInputType.MouseButton1,
-                UserInputState = Enum.UserInputState.Begin,
-                Position = Vector3.new(posX, posY, 0),
-                Delta = Vector3.new(0, 0, 0),
-                KeyCode = Enum.KeyCode.Unknown
-            }
-            local fakeTouchDown = {
-                UserInputType = Enum.UserInputType.Touch,
-                UserInputState = Enum.UserInputState.Begin,
-                Position = Vector3.new(posX, posY, 0),
-                Delta = Vector3.new(0, 0, 0),
-                KeyCode = Enum.KeyCode.Unknown
-            }
-            local fakeMouseUp = {
-                UserInputType = Enum.UserInputType.MouseButton1,
-                UserInputState = Enum.UserInputState.End,
-                Position = Vector3.new(posX, posY, 0),
-                Delta = Vector3.new(0, 0, 0),
-                KeyCode = Enum.KeyCode.Unknown
-            }
-            local fakeTouchUp = {
-                UserInputType = Enum.UserInputType.Touch,
-                UserInputState = Enum.UserInputState.End,
-                Position = Vector3.new(posX, posY, 0),
-                Delta = Vector3.new(0, 0, 0),
-                KeyCode = Enum.KeyCode.Unknown
-            }
-
-            pcall(function()
-                if getconnections then
-                    local conns = getconnections(UserInputService.InputBegan)
-                    for i = 1, #conns do
-                        fireConn(conns[i], fakeMouseDown, false)
-                        fireConn(conns[i], fakeTouchDown, false)
-                    end
-
+            else
+                -- PC: Fallback mouse click simulation
+                if mouse1click then
+                    mouse1click()
+                elseif mouse1press then
+                    mouse1press()
+                    task.delay(0.02, function() pcall(mouse1release) end)
+                else
+                    local vp = Camera.ViewportSize
+                    VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
                     task.delay(0.02, function()
                         pcall(function()
-                            local endConns = getconnections(UserInputService.InputEnded)
-                            for i = 1, #endConns do
-                                fireConn(endConns[i], fakeMouseUp, false)
-                                fireConn(endConns[i], fakeTouchUp, false)
-                            end
+                            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
                         end)
                     end)
                 end
-            end)
-        else
-            -- PC: Old method via mouse click simulation
-            if mouse1click then
-                mouse1click()
-            elseif mouse1press then
-                mouse1press()
-                task.delay(0.02, function() pcall(mouse1release) end)
-            else
-                local vp = Camera.ViewportSize
-                VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-                task.delay(0.02, function()
-                    pcall(function()
-                        VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-                    end)
-                end)
             end
-        end
-    end)
+        end)
+    end
 end
 
 
@@ -1593,6 +1782,7 @@ do
     _updateAutoAimFunc = UpdateAutoAim
     local AutoShootBtn, UpdateAutoShoot       = CreateToggleButton("Auto Shoot",   "🔫", _G.AutoShoot)
     local AimModeBtn,   UpdateAimMode         = CreateToggleButton("Smooth Aim",   "🔄", false)
+    local NearModeBtn,  UpdateNearMode        = CreateToggleButton("Near Mode",    "📍", _G.NearMode or false)
     local TeamCheckBtn, UpdateTeamCheck       = CreateToggleButton("Team Check",   "🤝", _G.TeamCheck)
     local FOVBtn,       UpdateShowFOV         = CreateToggleButton("Show FOV",     "⭕", _G.ShowFOV)
     local EspBtn,       UpdateEsp             = CreateToggleButton("ESP",          "👁", false)
@@ -1609,6 +1799,7 @@ do
     AutoAimBtn.MouseButton1Click:Connect(function() ToggleAutoAim() end)
     AutoShootBtn.MouseButton1Click:Connect(function() _G.AutoShoot = not _G.AutoShoot; UpdateAutoShoot(_G.AutoShoot); if ShootTargetWidget then ShootTargetWidget.Visible = _G.AutoShoot and UserInputService.TouchEnabled end; SaveConfig() end)
     AimModeBtn.MouseButton1Click:Connect(function() _G.SmoothAim = not _G.SmoothAim; UpdateAimMode(_G.SmoothAim); SaveConfig() end)
+    NearModeBtn.MouseButton1Click:Connect(function() _G.NearMode = not _G.NearMode; UpdateNearMode(_G.NearMode); UpdateFOVCircle(); SaveConfig() end)
     TeamCheckBtn.MouseButton1Click:Connect(function() _G.TeamCheck = not _G.TeamCheck; UpdateTeamCheck(_G.TeamCheck); SaveConfig() end)
     FOVBtn.MouseButton1Click:Connect(function() _G.ShowFOV = not _G.ShowFOV; UpdateShowFOV(_G.ShowFOV); SaveConfig() end)
     EspBtn.MouseButton1Click:Connect(function() _G.EspEnabled = not _G.EspEnabled; UpdateEsp(_G.EspEnabled); RefreshAllESP() end)
@@ -1997,11 +2188,12 @@ UserInputService.JumpRequest:Connect(function()
 end)
 
 -- [[ AIMBOT & FOV RENDER LOOP ]] --
-RunService.RenderStepped:Connect(function(dt)
-if _G.MovementLoopID ~= CurrentLoopID then return end
-UpdateFOVCircle()
-if _G.AutoAim then RunAutoAim(dt) end
-if _G.AutoShoot then RunAutoShoot() end
+pcall(function() RunService:UnbindFromRenderStep("ZHub_CameraTrack") end)
+RunService:BindToRenderStep("ZHub_CameraTrack", Enum.RenderPriority.Camera.Value + 1, function(dt)
+    if _G.MovementLoopID ~= CurrentLoopID then return end
+    UpdateFOVCircle()
+    if _G.AutoAim then RunAutoAim(dt) end
+    if _G.AutoShoot then RunAutoShoot() end
 end)
 
 -- [[ ZERO-ALLOCATION NOCLIP PART CACHE (PREVENTS GC FRAME DROPS) ]] --
