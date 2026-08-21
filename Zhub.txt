@@ -474,21 +474,54 @@ local function ToggleFreeCam()
     end
 end
 
+local function GetFlyDirection()
+    local dir = Vector3.new()
+    local cam = workspace.CurrentCamera or Camera
+    if not cam then return dir end
+    local camCF = cam.CFrame
+    local look = camCF.LookVector
+    local right = camCF.RightVector
+    local up = Vector3.new(0, 1, 0)
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - look end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + right end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - right end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) or UserInputService:IsKeyDown(Enum.KeyCode.E) then dir = dir + up end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.Q) then dir = dir - up end
+
+    -- Mobile / Touchpad integration
+    if _padDragging and _mobileMoveVector and _mobileMoveVector.Magnitude > 0 then
+        dir = dir + (look * _mobileMoveVector.Y) + (right * _mobileMoveVector.X)
+    elseif dir.Magnitude == 0 and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local humMove = LocalPlayer.Character.Humanoid.MoveDirection
+        if humMove.Magnitude > 0 then
+            dir = dir + (look * humMove.Z * -1) + (right * humMove.X)
+        end
+    end
+
+    if dir.Magnitude > 0 then
+        return dir.Unit
+    end
+    return Vector3.new(0, 0, 0)
+end
+
 local function StopFly()
     local char = LocalPlayer.Character
     if char then
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChild("Humanoid")
-    if hrp then
-        local bv = hrp:FindFirstChild("VelocityGrip")
-        local bg = hrp:FindFirstChild("GyroGrip")
-        if bv then bv:Destroy() end
-        if bg then bg:Destroy() end
-    end
-    if hum then
-        hum.PlatformStand = false
-        hum:ChangeState(Enum.HumanoidStateType.Running)
-    end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChild("Humanoid")
+        if hrp then
+            local bv = hrp:FindFirstChild("ZHub_FlyVelocity") or hrp:FindFirstChild("VelocityGrip")
+            local bg = hrp:FindFirstChild("ZHub_FlyGyro") or hrp:FindFirstChild("GyroGrip")
+            if bv then bv:Destroy() end
+            if bg then bg:Destroy() end
+            pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0) end)
+        end
+        if hum then
+            hum.PlatformStand = false
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        end
     end
 end
 
@@ -831,6 +864,7 @@ pcall(function()
         3000,
         Enum.KeyCode.T
     )
+
 end)
 
 -- 2. UserInputService InputBegan
@@ -845,9 +879,12 @@ end)
 pcall(function()
     if Mouse and Mouse.KeyDown then
         Mouse.KeyDown:Connect(function(key)
-            if key and string.lower(key) == "t" then
-                if IsTypingInTextBox() then return end
-                HandleToggleAutoAimKey()
+            if key then
+                local lk = string.lower(key)
+                if lk == "t" then
+                    if IsTypingInTextBox() then return end
+                    HandleToggleAutoAimKey()
+                end
             end
         end)
     end
@@ -2208,9 +2245,10 @@ do
         return btn
     end
 
-    local TpBtn = CreateActionButton("Teleport (Click)", 100)
-    local TpToolBtn = CreateActionButton("TP Tool", 100)
-    local IgnoreBtn = CreateActionButton("Ignore Target", 100)
+    local TpBtn = CreateActionButton("TP (Click)", 75)
+    local TpToolBtn = CreateActionButton("TP Tool", 75)
+    local IgnoreBtn = CreateActionButton("Ignore", 75)
+    local InspectBtn = CreateActionButton("Inspect", 75)
 
     TpBtn.MouseButton1Click:Connect(function()
         local m = LocalPlayer:GetMouse()
@@ -2241,6 +2279,87 @@ do
                 CurrentLockedTarget = nil
                 _lastTargetChar = nil
             end
+        end
+    end)
+
+    local InspectBtn = CreateActionButton("Inspect [K]", 75)
+
+    local function RunInspect()
+        local origin = Camera.CFrame.Position
+        local lookDir = Camera.CFrame.LookVector
+        local target = nil
+
+        -- 1. Camera Center Raycast (wherever your screen/camera is aimed!)
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        if LocalPlayer.Character then
+            rayParams.FilterDescendantsInstances = {LocalPlayer.Character}
+        end
+        local hit = workspace:Raycast(origin, lookDir * 100, rayParams)
+        if hit and hit.Instance and hit.Instance:IsA("BasePart") then
+            target = hit.Instance
+        end
+
+        -- 2. Fallback: Closest non-character part near player (within 25 studs)
+        if not target then
+            local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local scanOrigin = myHRP and myHRP.Position or origin
+            local bestDist = 30
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("BasePart") and not (LocalPlayer.Character and obj:IsDescendantOf(LocalPlayer.Character)) then
+                    local dist = (obj.Position - scanOrigin).Magnitude
+                    if dist < bestDist then
+                        bestDist = dist
+                        target = obj
+                    end
+                end
+            end
+        end
+
+        if target then
+            local topModel = target
+            while topModel.Parent and topModel.Parent ~= workspace and topModel.Parent.ClassName ~= "Workspace" and topModel.Parent.ClassName ~= "Folder" do
+                topModel = topModel.Parent
+            end
+
+            local function DumpInst(inst, depth)
+                depth = depth or 0
+                local indent = string.rep("  ", depth)
+                local lines = {}
+                local line = string.format("%s- %s [%s]", indent, inst.Name, inst.ClassName)
+                if inst:IsA("BasePart") then
+                    local c = inst.Color
+                    local sz = inst.Size
+                    line = line .. string.format(" (Color: RGB(%.0f,%.0f,%.0f) | %s | Size: %.1f,%.1f,%.1f | Shape: %s)",
+                        c.R * 255, c.G * 255, c.B * 255, inst.BrickColor.Name, sz.X, sz.Y, sz.Z, tostring(pcall(function() return inst.Shape end) and inst.Shape or "Part"))
+                end
+                table.insert(lines, line)
+                for _, ch in ipairs(inst:GetChildren()) do
+                    table.insert(lines, DumpInst(ch, depth + 1))
+                end
+                return table.concat(lines, "\n")
+            end
+
+            local dump = string.format("Target: %s\nFull Path: %s\nParent Model:\n%s", target:GetFullName(), target.ClassName, DumpInst(topModel, 0))
+            print(dump)
+            if setclipboard then
+                setclipboard(dump)
+                InspectBtn.Text = "Copied!"
+                task.delay(1.5, function() InspectBtn.Text = "Inspect [K]" end)
+            end
+        else
+            InspectBtn.Text = "No Part"
+            task.delay(1.5, function() InspectBtn.Text = "Inspect [K]" end)
+        end
+    end
+
+    InspectBtn.MouseButton1Click:Connect(RunInspect)
+
+    -- K Key Shortcut to Inspect
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if input.KeyCode == Enum.KeyCode.K then
+            if IsTypingInTextBox() then return end
+            RunInspect()
         end
     end)
 
@@ -2588,33 +2707,58 @@ if char and char:FindFirstChild("Humanoid") then
 
 
 
-    -- Walk Speed (only modify WalkSpeed when Speed feature is active)
+    -- Walk Speed (Dual-Layer: WalkSpeed override + Velocity assist for anti-cheat bypass)
     if _G.SpeedEnabled and not _G.Fly then
-    char.Humanoid.WalkSpeed = _G.MovementSpeed
+        local hum = char:FindFirstChild("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hum then
+            hum.WalkSpeed = _G.MovementSpeed
+            if hrp and hum.MoveDirection.Magnitude > 0 then
+                local moveDir = hum.MoveDirection
+                local speedVal = _G.MovementSpeed
+                local curY = hrp.AssemblyLinearVelocity.Y
+                hrp.AssemblyLinearVelocity = Vector3.new(moveDir.X * speedVal, curY, moveDir.Z * speedVal)
+            end
+        end
     end
 
-    -- Fly
+    -- Fly (Full 3D Camera-Oriented Flying + Hover Physics + LinearVelocity)
     if _G.Fly then
-    char.Humanoid.PlatformStand = true
-    local hrp = char.HumanoidRootPart
-    local bv = hrp:FindFirstChild("VelocityGrip") or Instance.new("BodyVelocity", hrp)
-    local bg = hrp:FindFirstChild("GyroGrip")     or Instance.new("BodyGyro",     hrp)
-    bv.Name = "VelocityGrip"
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bg.Name = "GyroGrip"
-    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        local hum = char:FindFirstChild("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hum and hrp then
+            hum.PlatformStand = true
 
-    local dir = char.Humanoid.MoveDirection
-    if dir.Magnitude == 0 then
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - Camera.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - Camera.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + Camera.CFrame.RightVector end
-    end
+            local flySpeed = _G.SpeedEnabled and _G.MovementSpeed or 50
+            local dir = GetFlyDirection()
 
-    local flySpeed = _G.SpeedEnabled and _G.MovementSpeed or 20
-    bv.Velocity = dir * flySpeed
-    bg.CFrame = Camera.CFrame
+            if dir.Magnitude > 0 then
+                hrp.AssemblyLinearVelocity = dir * flySpeed
+            else
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end
+
+            -- Backup BodyVelocity & BodyGyro for older engines
+            local bv = hrp:FindFirstChild("ZHub_FlyVelocity")
+            if not bv then
+                bv = Instance.new("BodyVelocity")
+                bv.Name = "ZHub_FlyVelocity"
+                bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                bv.Parent = hrp
+            end
+            bv.Velocity = dir.Magnitude > 0 and (dir * flySpeed) or Vector3.new(0, 0, 0)
+
+            local bg = hrp:FindFirstChild("ZHub_FlyGyro")
+            if not bg then
+                bg = Instance.new("BodyGyro")
+                bg.Name = "ZHub_FlyGyro"
+                bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+                bg.D = 100
+                bg.P = 10000
+                bg.Parent = hrp
+            end
+            bg.CFrame = Camera.CFrame
+        end
     end
 
     -- Reach - Update tool hitboxes when equipped
